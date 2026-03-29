@@ -1,0 +1,155 @@
+# ─── AI Tester Agent CI/CD Pipeline ───────────────────────────────────────────
+# Runs lint, test, build, and risk assessment on every push/PR to main.
+# Acts as the automated CI/CD Gatekeeper Agent.
+
+name: AI Tester Agent CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ─── Stage 1: Lint & Type Check ─────────────────────────────────────────────
+  lint:
+    name: 🔍 Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: TypeScript Type Check
+        run: npx tsc --noEmit
+        working-directory: frontend
+
+      - name: ESLint
+        run: npm run lint
+        working-directory: frontend
+
+  # ─── Stage 2: Backend Tests ─────────────────────────────────────────────────
+  backend-test:
+    name: 🧪 Backend Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install Backend Dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Health Check (Start & Verify)
+        run: |
+          node src/index.js &
+          sleep 3
+          curl -f http://localhost:5000/api/health || exit 1
+          kill %1
+        working-directory: backend
+
+  # ─── Stage 3: Frontend Build ────────────────────────────────────────────────
+  build:
+    name: 🏗️ Build Frontend
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build Next.js
+        run: npm run build
+        working-directory: frontend
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: next-build
+          path: frontend/.next
+          retention-days: 7
+
+  # ─── Stage 4: Risk Assessment Gate ──────────────────────────────────────────
+  risk-gate:
+    name: 🚦 Risk Assessment Gate
+    runs-on: ubuntu-latest
+    needs: [backend-test, build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install Backend Dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Start Backend & Run Risk Prediction
+        run: |
+          node src/index.js &
+          sleep 3
+          
+          echo "🔍 Running AI Risk Prediction..."
+          RISK_RESPONSE=$(curl -s -X POST http://localhost:5000/api/predict-risk \
+            -H "Content-Type: application/json" \
+            -d '{"projectId": "ci-check", "context": {}}')
+          
+          echo "📊 Risk Assessment Response:"
+          echo "$RISK_RESPONSE" | jq .
+          
+          # Extract risk score and check threshold
+          RISK_SCORE=$(echo "$RISK_RESPONSE" | jq '.risk.riskScore')
+          DECISION=$(echo "$RISK_RESPONSE" | jq -r '.gatekeeper.decision')
+          
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Risk Score: $RISK_SCORE / 100"
+          echo "Gatekeeper Decision: $DECISION"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          
+          if [ "$DECISION" = "BLOCKED" ]; then
+            echo "❌ Deployment BLOCKED - Risk score too high"
+            echo "::error::Deployment blocked by AI Risk Agent (score: $RISK_SCORE)"
+            exit 1
+          else
+            echo "✅ Deployment APPROVED - Risk within acceptable range"
+          fi
+          
+          kill %1
+        working-directory: backend
+
+  # ─── Stage 5: Deploy (on main only) ────────────────────────────────────────
+  deploy:
+    name: 🚀 Deploy
+    runs-on: ubuntu-latest
+    needs: [risk-gate]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy Notification
+        run: |
+          echo "🚀 All checks passed! Deployment approved by AI Gatekeeper Agent."
+          echo "Deploy to your hosting platform (Vercel, AWS, etc.) here."
