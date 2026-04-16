@@ -8,7 +8,6 @@
  * Every project gets unique, realistic data — not the same hardcoded result.
  */
 
-// ─── Project Context (persisted across calls) ────────────────────────────────
 
 let projectContext = {
   name: '',
@@ -40,7 +39,6 @@ function getCachedGitHubData() {
   return cachedGitHubData;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 // Deterministic hash from string → consistent per-project results
 function hashString(str) {
@@ -169,7 +167,6 @@ function deriveModules(ctx, github) {
   return modules;
 }
 
-// ─── Requirement Analysis ────────────────────────────────────────────────────
 
 function simulateRequirementAnalysis(story) {
   const ctx = getProjectContext();
@@ -235,7 +232,6 @@ function simulateRequirementAnalysis(story) {
   };
 }
 
-// ─── Commit Analysis ─────────────────────────────────────────────────────────
 
 function simulateCommitAnalysis(commit) {
   const ctx = getProjectContext();
@@ -290,7 +286,6 @@ function simulateCommitAnalysis(commit) {
   };
 }
 
-// ─── Test Generation ─────────────────────────────────────────────────────────
 
 function simulateTestGeneration(context) {
   const ctx = getProjectContext();
@@ -305,7 +300,6 @@ function simulateTestGeneration(context) {
   const tests = [];
   let testId = 1;
 
-  // ──── FUNCTIONAL TESTS (dynamic count: 2-5 based on project) ────────────
   const functionalPool = [
     { title: `Verify ${repoName} homepage loads correctly`, steps: [`Navigate to ${websiteUrl}`, 'Wait for page load', 'Verify main content is visible', 'Check no console errors'], expected: 'Homepage renders with all sections visible and interactive' },
     { title: `Verify navigation links on ${repoName}`, steps: [`Navigate to ${websiteUrl}`, 'Click each navigation link', 'Verify each page loads', 'Check URL changes correctly'], expected: 'All navigation links lead to correct pages without 404 errors' },
@@ -326,7 +320,6 @@ function simulateTestGeneration(context) {
     });
   }
 
-  // ──── EDGE TESTS (dynamic count: 1-4) ───────────────────────────────────
   const edgePool = [
     { title: `Handle slow network on ${repoName}`, steps: ['Throttle to Slow 3G', `Navigate to ${websiteUrl}`, 'Wait for render'], expected: 'Loading indicator shown; content loads gracefully' },
     { title: `Verify ${repoName} with JavaScript disabled`, steps: [`Navigate to ${websiteUrl} with JS disabled`, 'Check content'], expected: 'Core content visible or noscript fallback displayed' },
@@ -346,7 +339,6 @@ function simulateTestGeneration(context) {
     });
   }
 
-  // ──── API TESTS (dynamic count: 1-4 based on modules) ──────────────────
   const apiPool = [
     { title: `GET ${websiteUrl} returns 200`, steps: [`GET ${websiteUrl}`, 'Check status', 'Check content-type'], expected: 'Status 200, text/html', code: `test('GET /', async () => {\n  const r = await fetch('${websiteUrl}');\n  expect(r.status).toBe(200);\n});` },
     { title: `${repoName} returns valid HTML`, steps: [`Fetch ${websiteUrl}`, 'Parse HTML', 'Validate structure'], expected: 'Valid HTML5 with DOCTYPE, head, body', code: `test('Valid HTML', async () => {\n  const r = await fetch('${websiteUrl}');\n  const h = await r.text();\n  expect(h).toContain('<!DOCTYPE html>');\n});` },
@@ -364,7 +356,6 @@ function simulateTestGeneration(context) {
     });
   }
 
-  // ──── UI TESTS (dynamic count: 1-3) ─────────────────────────────────────
   const uiPool = [
     { title: `Visual regression test for ${repoName}`, steps: [`Navigate to ${websiteUrl}`, 'Wait for assets', 'Screenshot', 'Compare baseline'], expected: 'No unexpected visual differences', code: `test('Visual regression', async ({ page }) => {\n  await page.goto('${websiteUrl}');\n  await expect(page).toHaveScreenshot('home.png');\n});` },
     { title: `Test ${repoName} interactive elements`, steps: [`Navigate to ${websiteUrl}`, 'Find clickable elements', 'Click each', 'Verify response'], expected: 'All elements respond with visual feedback', code: `test('Interactive', async ({ page }) => {\n  await page.goto('${websiteUrl}');\n  const btns = await page.locator('button, a[href]').all();\n  expect(btns.length).toBeGreaterThan(0);\n});` },
@@ -381,7 +372,6 @@ function simulateTestGeneration(context) {
     });
   }
 
-  // ──── Extra tests if project has many open issues ───────────────────────
   if (openIssues > 100) {
     tests.push({
       id: `TC-${String(testId++).padStart(3, '0')}`,
@@ -392,7 +382,6 @@ function simulateTestGeneration(context) {
     });
   }
 
-  // ──── Extra module-specific tests ───────────────────────────────────────
   modules.forEach((mod, mi) => {
     if (mi < 2 && seededRandom(seed, 170 + mi) > 0.4) {
       tests.push({
@@ -421,7 +410,6 @@ function simulateTestGeneration(context) {
   };
 }
 
-// ─── Risk Prediction ─────────────────────────────────────────────────────────
 
 function simulateRiskPrediction(context) {
   const ctx = getProjectContext();
@@ -477,7 +465,6 @@ function simulateRiskPrediction(context) {
   };
 }
 
-// ─── Regression Optimization ─────────────────────────────────────────────────
 
 function simulateRegressionOptimization(tests) {
   const ctx = getProjectContext();
@@ -503,7 +490,6 @@ function simulateRegressionOptimization(tests) {
   };
 }
 
-// ─── Gatekeeper Decision ─────────────────────────────────────────────────────
 
 function simulateGatekeeperDecision(riskReport) {
   const ctx = getProjectContext();

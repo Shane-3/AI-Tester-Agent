@@ -13,7 +13,6 @@ const { crawlWebsite } = require('../services/websiteCrawler');
 const { runTests, summarizeResults, getCachedTestResults, cacheTestResults } = require('../services/testRunner');
 const { getProjectContext } = require('../services/aiSimulator');
 
-// ─── AI Dynamic Test Generation ─────────────────────────────────────────────
 
 /**
  * Site-type-aware test template library.
@@ -496,7 +495,6 @@ Return ONLY a valid JSON array (no markdown, no code fences):
 
 let _testStudioCache = null;
 
-// ─── Route ──────────────────────────────────────────────────────────────────
 
 router.post('/generate-tests', async (req, res) => {
   try {
@@ -504,7 +502,6 @@ router.post('/generate-tests', async (req, res) => {
     const websiteUrl = ctx.websiteUrl || 'https://example.com';
     const forceRefresh = req.body.refresh === true;
 
-    // ─── Check full Test Studio cache first ───
     const baseCache = getCachedTestResults();
     if (!forceRefresh && _testStudioCache && _testStudioCache.url === websiteUrl && (Date.now() - _testStudioCache.time < 5 * 60 * 1000)) {
       if (!baseCache || _testStudioCache.time >= baseCache.cachedAt) {
@@ -513,7 +510,6 @@ router.post('/generate-tests', async (req, res) => {
       }
     }
 
-    // ─── Check shared cache (populated by Dashboard pipeline) ───
     let siteAnalysis, baseTests, summary;
 
     if (!forceRefresh) {
@@ -526,7 +522,6 @@ router.post('/generate-tests', async (req, res) => {
       }
     }
 
-    // ─── No cache — run fresh pipeline ───
     if (!siteAnalysis) {
       console.log('[TestGen] Running fresh agent pipeline for comprehensive tests...');
       const { runAgentPipeline } = require('../services/agentGraph');
@@ -536,11 +531,9 @@ router.post('/generate-tests', async (req, res) => {
       summary = finalState.testSummary;
     }
 
-    // ─── Layer 2: Dynamic site-aware tests ───
     // Redundant with testRunner.js, removed to keep dashboard count sync
     let dynamicTests = [];
 
-    // ─── Layer 3: AI-generated tests from Vertex AI ───
     let aiTests = [];
     if (req.body.includeAI !== false) {
       console.log('[TestGen] Requesting AI-generated tests from Vertex AI...');
@@ -549,7 +542,6 @@ router.post('/generate-tests', async (req, res) => {
       console.log(`[TestGen] Generated ${aiTests.length} AI tests`);
     }
 
-    // ─── Combine all 3 layers ───
     const allTests = [...baseTests, ...dynamicTests, ...aiTests];
     const fullSummary = summarizeResults(allTests);
 

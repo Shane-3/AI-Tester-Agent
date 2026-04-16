@@ -9,7 +9,6 @@ const express = require('express');
 const router = express.Router();
 const { getMetrics, submitFeedback } = require('../services/metricsEngine');
 
-// ─── Get All Metrics ─────────────────────────────────────────────────────────
 
 router.get('/metrics', (req, res) => {
   try {
@@ -25,7 +24,6 @@ router.get('/metrics', (req, res) => {
   }
 });
 
-// ─── Submit Deployment Feedback ──────────────────────────────────────────────
 
 router.post('/deployment-feedback', (req, res) => {
   try {

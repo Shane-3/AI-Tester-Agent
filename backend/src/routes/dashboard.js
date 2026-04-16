@@ -27,7 +27,6 @@ function formatDuration(ms) {
   return `${minutes}m ${remainSec}s`;
 }
 
-// ─── Dashboard Response Cache ──────────────────────────────────────────────────
 let dashboardCache = null;
 let previousDashboardCache = null;
 let dashboardCacheTime = 0;
@@ -97,7 +96,6 @@ router.get('/dashboard-data', async (req, res) => {
     const finalState = await runAgentPipeline(websiteUrl);
     const totalPipelineMs = Date.now() - pipelineStart;
 
-    // ─── Map graph state to dashboard response ─────────────────────────
     const siteAnalysis = finalState.siteAnalysis || {};
     const riskAnalysis = finalState.riskAnalysis || {};
     const summary = finalState.testSummary || { total: 0, passed: 0, failed: 0, passRate: 0, byType: {} };

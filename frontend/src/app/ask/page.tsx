@@ -134,7 +134,7 @@ export default function AskPage() {
                     <div style={{ fontSize: 14, lineHeight: 1.6, color: "var(--text-primary)" }}>
                       <ReactMarkdown
                         components={{
-                          code({ inline, children, ...props }: { inline?: boolean; children?: React.ReactNode; [key: string]: unknown }) {
+                          code({ inline, children, ...props }: React.ComponentPropsWithoutRef<"code"> & { inline?: boolean }) {
                             return inline ? (
                               <code style={{ background: "rgba(255,255,255,0.1)", padding: "2px 4px", borderRadius: 3, fontSize: "0.9em" }} {...props}>{children}</code>
                             ) : (

@@ -7,7 +7,6 @@
 
 const { checkLinks } = require('./websiteCrawler');
 
-// ─── Shared Test Results Cache ─────────────────────────────────────────────
 // Both Dashboard and Test Studio routes share this cache so that navigating
 // to Test Studio after Dashboard doesn't re-run the entire pipeline.
 let _testResultsCache = null;
@@ -400,7 +399,6 @@ async function runTests(url, site) {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
-  // ─── SECURITY TESTS ─────────────────────────────────────────────────
   // ═══════════════════════════════════════════════════════════════════════
 
   // 17. COOKIE SECURITY FLAGS
@@ -513,7 +511,6 @@ async function runTests(url, site) {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
-  // ─── PERFORMANCE TESTS ──────────────────────────────────────────────
   // ═══════════════════════════════════════════════════════════════════════
 
   // 23. COMPRESSION CHECK
@@ -575,7 +572,6 @@ async function runTests(url, site) {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
-  // ─── ACCESSIBILITY TESTS (WCAG 2.1) ────────────────────────────────
   // ═══════════════════════════════════════════════════════════════════════
 
   // 27. LANGUAGE ATTRIBUTE
@@ -655,7 +651,6 @@ async function runTests(url, site) {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
-  // ─── DEPLOYMENT READINESS TESTS ─────────────────────────────────────
   // ═══════════════════════════════════════════════════════════════════════
 
   // 32. SITEMAP.XML CHECK

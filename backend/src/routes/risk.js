@@ -14,7 +14,6 @@ const { runTests, summarizeResults } = require('../services/testRunner');
 const { analyzeRisk } = require('../services/geminiAgent');
 const { getProjectContext } = require('../services/aiSimulator');
 
-// ─── Risk History (file-persisted across restarts) ────────────────────────────
 const fs = require('fs');
 const pathModule = require('path');
 const HISTORY_FILE = pathModule.join(__dirname, '..', '..', 'risk-history.json');
@@ -415,7 +414,6 @@ function buildGatekeeperConditions(blocked, factors, summary, siteAnalysis) {
 }
 
 
-// ─── Route ───────────────────────────────────────────────────────────────────
 
 router.post('/predict-risk', async (req, res) => {
   try {

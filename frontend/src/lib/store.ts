@@ -83,7 +83,6 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
-  // ─── Project Config ───────────────────────────────────────────────────────
   projectConfig: null,
   configureProject: async (data) => {
     try {
@@ -112,7 +111,6 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  // ─── GitHub Repo ──────────────────────────────────────────────────────────
   githubRepo: null,
   githubLoading: false,
   fetchGitHubRepo: async (url) => {
@@ -125,7 +123,6 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  // ─── Dashboard ────────────────────────────────────────────────────────────
   dashboard: null,
   dashboardLoading: false,
   dashboardError: null,
@@ -154,7 +151,6 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  // ─── Test Generation ──────────────────────────────────────────────────────
   generatedTests: null,
   testsLoading: false,
   runTestGeneration: async (projectId = 'demo', refresh = false) => {
@@ -167,7 +163,6 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  // ─── Risk Prediction ──────────────────────────────────────────────────────
   riskReport: null,
   riskLoading: false,
   runRiskPrediction: async (projectId = 'demo') => {
@@ -180,7 +175,6 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  // ─── Requirement Analysis ─────────────────────────────────────────────────
   requirementAnalysis: null,
   requirementLoading: false,
   runRequirementAnalysis: async (stories) => {
@@ -193,7 +187,6 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  // ─── Commit Analysis ──────────────────────────────────────────────────────
   commitAnalysis: null,
   commitLoading: false,
   runCommitAnalysis: async (commits) => {
@@ -206,11 +199,9 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  // ─── Active Tab ───────────────────────────────────────────────────────────
   activeTab: 'dashboard',
   setActiveTab: (tab: string) => set({ activeTab: tab }),
 
-  // ─── Code Fixes ───────────────────────────────────────────────────────────
   codeFixes: null,
   codeFixesLoading: false,
   runCodeAnalysis: async (repoUrl, refresh = false) => {
@@ -224,7 +215,6 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  // ─── Ask AI ───────────────────────────────────────────────────────────────
   chatHistory: [],
   chatLoading: false,
   askQuestion: async (question, repoUrl) => {
@@ -254,7 +244,6 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  // ─── Metrics ──────────────────────────────────────────────────────────────
   metrics: null,
   metricsLoading: false,
   loadMetrics: async () => {

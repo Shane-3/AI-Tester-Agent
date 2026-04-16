@@ -260,7 +260,6 @@ export default function TestStudioPage() {
                         <tr key={`${test.id}-detail`}>
                           <td colSpan={6} style={{ padding: "16px 20px" }}>
                             {isAI ? (
-                              /* AI-generated test detail view */
                               <div>
                                 <div style={{
                                   padding: "12px 16px", borderRadius: 6, marginBottom: 12,
@@ -316,7 +315,6 @@ export default function TestStudioPage() {
                                 </div>
                               </div>
                             ) : (
-                              /* Regular executed test detail view */
                               <div>
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 12 }}>
                                   <div>

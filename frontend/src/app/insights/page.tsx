@@ -27,7 +27,6 @@ import {
   ArrowRight,
 } from "lucide-react";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
 
 interface RiskFactor {
   name: string;
@@ -71,7 +70,6 @@ interface CategoryBreakdown {
   passRate: number;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function severityColor(severity: string) {
   switch (severity) {
@@ -112,7 +110,6 @@ function effortLabel(effort: string) {
   return effort === "low" ? "Quick fix" : effort === "high" ? "Major effort" : "Moderate effort";
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
 
 export default function InsightsPage() {
   const {

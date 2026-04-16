@@ -18,7 +18,6 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-// ─── Project Configuration ──────────────────────────────────────────────────
 
 export async function configureProject(data: { name?: string; websiteUrl?: string; repoUrl?: string }) {
   return apiFetch('/configure-project', {
@@ -36,13 +35,11 @@ export async function fetchGitHubRepo(url?: string) {
   return apiFetch(`/github-repo${query}`);
 }
 
-// ─── Dashboard ──────────────────────────────────────────────────────────────
 
 export async function fetchDashboardData(refresh = false) {
   return apiFetch(`/dashboard-data${refresh ? '?refresh=true' : ''}`);
 }
 
-// ─── Requirements Analysis ──────────────────────────────────────────────────
 
 export async function analyzeRequirements(stories: Array<{ title: string; description: string }>) {
   return apiFetch('/analyze-requirements', {
@@ -51,7 +48,6 @@ export async function analyzeRequirements(stories: Array<{ title: string; descri
   });
 }
 
-// ─── Commit Analysis ────────────────────────────────────────────────────────
 
 export async function analyzeCommit(commits: Array<{ sha: string; message: string; filesChanged?: string[] }>) {
   return apiFetch('/analyze-commit', {
@@ -60,7 +56,6 @@ export async function analyzeCommit(commits: Array<{ sha: string; message: strin
   });
 }
 
-// ─── Test Generation ────────────────────────────────────────────────────────
 
 export async function generateTests(projectId: string, context?: Record<string, unknown>, refresh = false) {
   return apiFetch('/generate-tests', {
@@ -69,7 +64,6 @@ export async function generateTests(projectId: string, context?: Record<string, 
   });
 }
 
-// ─── Risk Prediction ────────────────────────────────────────────────────────
 
 export async function predictRisk(projectId: string, context?: Record<string, unknown>) {
   return apiFetch('/predict-risk', {
@@ -78,7 +72,6 @@ export async function predictRisk(projectId: string, context?: Record<string, un
   });
 }
 
-// ─── Code Intelligence ──────────────────────────────────────────────────────
 
 export async function fetchCodeFixes(repoUrl?: string, refresh = false) {
   return apiFetch('/code-fixes', {
@@ -94,7 +87,6 @@ export async function askCodeQuestion(question: string, repoUrl?: string) {
   });
 }
 
-// ─── Metrics & Feedback ─────────────────────────────────────────────────────
 
 export async function fetchMetrics() {
   return apiFetch('/metrics');

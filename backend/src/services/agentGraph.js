@@ -20,7 +20,6 @@ const { runNewmanTests } = require('./newmanRunner');
 const { runZapScan } = require('./zapScanner');
 const { calculateSprintVelocity, recordPrediction } = require('./metricsEngine');
 
-// ─── State Schema ────────────────────────────────────────────────────────────
 
 /**
  * Shared state that flows through all agent nodes.
@@ -61,7 +60,6 @@ function createInitialState(url, options = {}) {
   };
 }
 
-// ─── Agent Nodes ─────────────────────────────────────────────────────────────
 
 /**
  * Node 1: Website Crawler Agent
@@ -351,7 +349,6 @@ async function metricsCollectorAgent(state) {
   }
 }
 
-// ─── Graph Construction ──────────────────────────────────────────────────────
 
 /**
  * Build and compile the LangGraph StateGraph
@@ -411,7 +408,6 @@ function getGraph() {
   return compiledGraph;
 }
 
-// ─── Pipeline Entry Point ────────────────────────────────────────────────────
 
 /**
  * Run the full agent pipeline through LangGraph
@@ -434,7 +430,6 @@ async function runAgentPipeline(url, options = {}) {
   return finalState;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatDuration(ms) {
   if (ms < 1000) return `${Math.round(ms)}ms`;

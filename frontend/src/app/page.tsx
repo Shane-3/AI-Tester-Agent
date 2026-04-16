@@ -22,7 +22,6 @@ import {
   TrendingDown,
 } from "lucide-react";
 
-// ─── Project Config Panel ────────────────────────────────────────────────────
 
 function ProjectConfigPanel() {
   const {
@@ -153,7 +152,6 @@ function ProjectConfigPanel() {
   );
 }
 
-// ─── Risk Bar (replaces SVG circle gauge) ────────────────────────────────────
 
 function RiskBar({ score, level }: { score: number; level: string }) {
   const color = level === "high" ? "var(--accent-red)" : level === "medium" ? "var(--accent-amber)" : "var(--accent-green)";
@@ -172,7 +170,6 @@ function RiskBar({ score, level }: { score: number; level: string }) {
   );
 }
 
-// ─── Stats Card ──────────────────────────────────────────────────────────────
 
 function StatsCard({ icon: Icon, label, value, sub, color }: {
   icon: React.ComponentType<{ size?: number; color?: string }>;
@@ -190,7 +187,6 @@ function StatsCard({ icon: Icon, label, value, sub, color }: {
   );
 }
 
-// ─── Module Card ─────────────────────────────────────────────────────────────
 
 function ModuleCard({ module }: { module: { name: string; impact: string; filesChanged: number; linesChanged: number; description?: string } }) {
   const color = module.impact === "high" ? "var(--accent-red)" : module.impact === "medium" ? "var(--accent-amber)" : "var(--accent-green)";
@@ -215,7 +211,6 @@ function ModuleCard({ module }: { module: { name: string; impact: string; filesC
   );
 }
 
-// ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const { dashboard, dashboardLoading, loadDashboard, refreshDashboard } = useAppStore();
@@ -252,7 +247,6 @@ export default function DashboardPage() {
   const { riskOverview, testMetrics, impactedModules } = dashboard;
   const passRate = testMetrics.totalGenerated > 0 ? Math.round((testMetrics.byStatus.passed / testMetrics.totalGenerated) * 100) : 0;
 
-  // ─── Unconfigured State ─────────────────────────────────────────────────────
   if (dashboard.unconfigured) {
     return (
       <div style={{ display: "flex" }}>

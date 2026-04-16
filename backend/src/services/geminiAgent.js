@@ -8,12 +8,10 @@
 
 const path = require('path');
 
-// ─── SDK instances ──────────────────────────────────────────────────────────
 let vertexAI = null;    // @google-cloud/vertexai (needs billing)
 let genAIStudio = null; // @google/generative-ai  (free API key)
 let activeSDK = null;   // 'vertex' | 'studio' | null
 
-// ─── Model Pool ────────────────────────────────────────────────────────────────
 const MODEL_POOL = [
   'gemini-2.0-flash',
   'gemini-2.5-flash',
@@ -276,7 +274,6 @@ IMPORTANT: List ALL significant issues and actionable recommendations — do NOT
  * Rule-based risk calculation (fallback when no Gemini)
  */
 function calculateRiskRuleBased(siteAnalysis, testResults, summary) {
-  // ─── Proportional Weighted Risk Calculation ────────────────────────
   // Risk is based on the ratio of weighted failures to total weighted tests,
   // ensuring the score reflects pass/fail proportions (not just stacking penalties).
   const priorityWeights = { critical: 4, high: 3, medium: 2, low: 1 };

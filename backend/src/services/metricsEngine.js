@@ -14,13 +14,11 @@ const path = require('path');
 const METRICS_FILE = path.join(__dirname, '..', '..', 'sprint-metrics.json');
 const PREDICTIONS_FILE = path.join(__dirname, '..', '..', 'prediction-history.json');
 
-// ─── Industry Benchmarks ─────────────────────────────────────────────────────
 
 const MANUAL_MINUTES_PER_TEST = 30;       // Industry avg: 30min to write+execute a manual test
 const MANUAL_MINUTES_PER_SECURITY_TEST = 45; // Security tests take longer
 const MANUAL_MINUTES_PER_API_TEST = 20;      // API tests are faster manually
 
-// ─── Sprint Velocity ─────────────────────────────────────────────────────────
 
 function loadSprintMetrics() {
   try {
@@ -127,7 +125,6 @@ function getSprintVelocityHistory() {
   };
 }
 
-// ─── Risk Score Accuracy ─────────────────────────────────────────────────────
 
 function loadPredictionHistory() {
   try {
@@ -319,7 +316,6 @@ function getMetrics() {
   };
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatDuration(ms) {
   if (ms < 1000) return `${Math.round(ms)}ms`;

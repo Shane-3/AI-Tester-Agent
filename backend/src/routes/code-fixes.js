@@ -75,7 +75,6 @@ router.post('/code-fixes', async (req, res) => {
 
     const pipelineMs = Date.now() - pipelineStart;
 
-    // ─── Risk Score Projection ─────────────────────────────────────────
     // Calculate current risk score from test failures weighted by priority
     // (aligned with the dashboard's calculateRiskRuleBased formula)
     const priorityWeights = { critical: 4, high: 3, medium: 2, low: 1 };
@@ -83,7 +82,6 @@ router.post('/code-fixes', async (req, res) => {
     const currentRiskPoints = failedTests.reduce((sum, t) => sum + (priorityWeights[t.priority] || 2), 0);
     const currentRiskScore = Math.min(100, Math.round((currentRiskPoints / Math.max(maxPossibleRisk, 1)) * 100));
 
-    // ─── Proportional Risk Distribution ─────────────────────────────────
     // Distribute the ENTIRE current risk across all fixes proportionally
     // based on severity weight. Applying all fixes → 0% risk (fully scalable).
     const severityWeight = { critical: 4, high: 3, medium: 2, low: 1 };

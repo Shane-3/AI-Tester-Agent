@@ -51,7 +51,6 @@ async function fetchRepoTree(owner, repo, branch = 'main') {
   throw new Error(`Could not fetch repository tree for ${owner}/${repo}`);
 }
 
-// ─── File Filtering ──────────────────────────────────────────────────────────
 
 const SKIP_DIRS = [
   'node_modules', '.git', 'dist', 'build', '.next', '__pycache__',

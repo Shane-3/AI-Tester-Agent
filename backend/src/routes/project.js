@@ -12,7 +12,6 @@ const { setProjectContext, getProjectContext, setCachedGitHubData } = require('.
 const { invalidateDashboardCache } = require('./dashboard');
 const { invalidateTestCache } = require('../services/testRunner');
 
-// ─── Configure Project ──────────────────────────────────────────────────────
 
 router.post('/configure-project', (req, res) => {
   try {
@@ -38,7 +37,6 @@ router.post('/configure-project', (req, res) => {
   }
 });
 
-// ─── Get Project Info ────────────────────────────────────────────────────────
 
 router.get('/project-info', (req, res) => {
   res.json({
@@ -47,7 +45,6 @@ router.get('/project-info', (req, res) => {
   });
 });
 
-// ─── GitHub Repo Integration ─────────────────────────────────────────────────
 // Fetches real data from a public GitHub repo (no auth needed for public repos)
 
 router.get('/github-repo', async (req, res) => {
