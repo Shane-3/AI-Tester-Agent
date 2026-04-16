@@ -111,7 +111,7 @@ export default function AskPage() {
                       onMouseOver={(e) => { e.currentTarget.style.borderColor = "var(--accent-blue)"; e.currentTarget.style.color = "var(--text-primary)"; }}
                       onMouseOut={(e) => { e.currentTarget.style.borderColor = "var(--border-color)"; e.currentTarget.style.color = "var(--text-secondary)"; }}
                     >
-                      "{q}"
+                      &quot;{q}&quot;
                     </button>
                   ))}
                 </div>
@@ -134,7 +134,7 @@ export default function AskPage() {
                     <div style={{ fontSize: 14, lineHeight: 1.6, color: "var(--text-primary)" }}>
                       <ReactMarkdown
                         components={{
-                          code({ node, inline, className, children, ...props }: any) {
+                          code({ inline, children, ...props }: { inline?: boolean; children?: React.ReactNode; [key: string]: unknown }) {
                             return inline ? (
                               <code style={{ background: "rgba(255,255,255,0.1)", padding: "2px 4px", borderRadius: 3, fontSize: "0.9em" }} {...props}>{children}</code>
                             ) : (
@@ -152,7 +152,7 @@ export default function AskPage() {
                     {/* AI References */}
                     {msg.role === "assistant" && msg.references && msg.references.length > 0 && (
                       <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 8 }}>
-                        {msg.references.map((ref: any, refIdx: number) => (
+                        {msg.references.map((ref: { file: string; lines?: string }, refIdx: number) => (
                           <div key={refIdx} style={{
                             display: "flex", alignItems: "center", gap: 6,
                             padding: "6px 10px", background: "rgba(59, 130, 246, 0.1)",

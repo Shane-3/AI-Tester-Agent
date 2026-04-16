@@ -117,7 +117,7 @@ export default function CodeFixesPage() {
             <FileCode size={24} color="var(--text-muted)" style={{ margin: "0 auto 12px" }} />
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>No Fix Suggestions Found</div>
             <p style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-              All tests may be passing, or the AI couldn't confidently trace failures to specific files.
+              All tests may be passing, or the AI couldn&apos;t confidently trace failures to specific files.
             </p>
           </div>
         ) : (
@@ -218,7 +218,7 @@ export default function CodeFixesPage() {
 
             {/* List of Fixes */}
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {fixes.map((fix: any, index: number) => {
+              {fixes.map((fix: { severity?: string; file?: string; line?: number; problem?: string; fix?: string; riskReduction?: number; consequence?: string }, index: number) => {
                 const isExpanded = expandedFix === index;
                 const severityColor =
                   fix.severity === "critical" ? "var(--status-red)" :

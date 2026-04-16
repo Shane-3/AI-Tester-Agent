@@ -65,11 +65,9 @@ export default function TestStudioPage() {
 
   const tests: TestResult[] = generatedTests?.generation?.tests || [];
   const filteredTests = filter === "all" ? tests : tests.filter(t => t.type === filter);
-  const coverage = generatedTests?.generation?.coverage || { functional: 0, edge: 0, api: 0, ui: 0 };
   const summary = generatedTests?.summary || null;
   const projectName = generatedTests?.generation?.projectContext?.name || dashboard?.project?.name || projectConfig?.name || "Project";
   const websiteUrl = generatedTests?.generation?.projectContext?.url || projectConfig?.websiteUrl || "";
-  const isCached = generatedTests?.cached === true;
   const aiTestCount = tests.filter(t => t.aiGenerated).length;
 
   const realTests = tests.filter(t => !t.aiGenerated);

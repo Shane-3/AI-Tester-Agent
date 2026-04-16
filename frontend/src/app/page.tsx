@@ -12,9 +12,7 @@ import {
   ShieldCheck,
   FileCode2,
   Pencil,
-  ArrowUpRight,
   Globe,
-  GitBranch,
   Star,
   GitFork,
   AlertCircle,
@@ -22,7 +20,6 @@ import {
   ExternalLink,
   Loader2,
   TrendingDown,
-  TrendingUp,
 } from "lucide-react";
 
 // ─── Project Config Panel ────────────────────────────────────────────────────
@@ -45,6 +42,7 @@ function ProjectConfigPanel() {
 
   useEffect(() => {
     if (projectConfig) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setWebsiteUrl(projectConfig.websiteUrl || "");
       setRepoUrl(projectConfig.repoUrl || "");
       setProjectName(projectConfig.name || "");

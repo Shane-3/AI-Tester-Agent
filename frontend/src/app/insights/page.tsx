@@ -17,8 +17,6 @@ import {
   ChevronRight,
   Zap,
   BarChart3,
-  Target,
-  ArrowRight,
   Timer,
   Gauge,
   ThumbsUp,
@@ -26,6 +24,7 @@ import {
   Clock,
   Activity,
   Award,
+  ArrowRight,
 } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -120,7 +119,7 @@ export default function InsightsPage() {
     riskReport, riskLoading, runRiskPrediction,
     dashboard, loadDashboard,
     projectConfig, loadProjectInfo,
-    metrics, metricsLoading, loadMetrics, submitFeedback,
+    metrics, loadMetrics, submitFeedback,
   } = useAppStore();
 
   const [expandedFactors, setExpandedFactors] = useState<Set<number>>(new Set());
@@ -158,7 +157,8 @@ export default function InsightsPage() {
   const toggleFactor = (i: number) => {
     setExpandedFactors(prev => {
       const next = new Set(prev);
-      next.has(i) ? next.delete(i) : next.add(i);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
       return next;
     });
   };
