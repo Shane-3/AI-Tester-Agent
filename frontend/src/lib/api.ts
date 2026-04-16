@@ -38,8 +38,8 @@ export async function fetchGitHubRepo(url?: string) {
 
 // ─── Dashboard ──────────────────────────────────────────────────────────────
 
-export async function fetchDashboardData() {
-  return apiFetch('/dashboard-data');
+export async function fetchDashboardData(refresh = false) {
+  return apiFetch(`/dashboard-data${refresh ? '?refresh=true' : ''}`);
 }
 
 // ─── Requirements Analysis ──────────────────────────────────────────────────
@@ -62,10 +62,10 @@ export async function analyzeCommit(commits: Array<{ sha: string; message: strin
 
 // ─── Test Generation ────────────────────────────────────────────────────────
 
-export async function generateTests(projectId: string, context?: Record<string, unknown>) {
+export async function generateTests(projectId: string, context?: Record<string, unknown>, refresh = false) {
   return apiFetch('/generate-tests', {
     method: 'POST',
-    body: JSON.stringify({ projectId, context }),
+    body: JSON.stringify({ projectId, context, refresh }),
   });
 }
 
@@ -75,5 +75,34 @@ export async function predictRisk(projectId: string, context?: Record<string, un
   return apiFetch('/predict-risk', {
     method: 'POST',
     body: JSON.stringify({ projectId, context }),
+  });
+}
+
+// ─── Code Intelligence ──────────────────────────────────────────────────────
+
+export async function fetchCodeFixes(repoUrl?: string, refresh = false) {
+  return apiFetch('/code-fixes', {
+    method: 'POST',
+    body: JSON.stringify({ repoUrl, refresh }),
+  });
+}
+
+export async function askCodeQuestion(question: string, repoUrl?: string) {
+  return apiFetch('/ask', {
+    method: 'POST',
+    body: JSON.stringify({ question, repoUrl }),
+  });
+}
+
+// ─── Metrics & Feedback ─────────────────────────────────────────────────────
+
+export async function fetchMetrics() {
+  return apiFetch('/metrics');
+}
+
+export async function submitDeploymentFeedback(predictionId: string, outcome: 'smooth' | 'minor' | 'major') {
+  return apiFetch('/deployment-feedback', {
+    method: 'POST',
+    body: JSON.stringify({ predictionId, outcome }),
   });
 }

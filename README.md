@@ -1,23 +1,23 @@
 # 🤖 AI Tester Agent — Context-Aware Autonomous Release Intelligence
 
-> An AI-powered QA system that replaces manual testing with intelligent, autonomous agents. Understands requirements, analyzes code, generates tests, predicts risk, and gates deployments.
+> An AI-powered QA system that replaces manual testing with intelligent, autonomous agents. Understands requirements, analyzes code, generates tests, executes them across real-world tools, predicts risk, and gates deployments.
 
-![Status](https://img.shields.io/badge/status-demo--ready-brightgreen)
-![Tech](https://img.shields.io/badge/stack-Next.js%20%2B%20Express%20%2B%20AI-blue)
-![Agents](https://img.shields.io/badge/agents-6%20autonomous-purple)
+![Status](https://img.shields.io/badge/status-ready-brightgreen)
+![Tech](https://img.shields.io/badge/stack-Next.js%2016%20%2B%20Express%20%2B%20LangGraph-blue)
+![Agents](https://img.shields.io/badge/agents-multi--agent%20architecture-purple)
 
 ---
 
 ## 🎯 What It Does
 
-| Agent | Role |
+| Agent/Feature | Role |
 |-------|------|
-| 📋 **Requirement Intelligence** | Extracts features, acceptance criteria, and edge cases from user stories |
-| 🔍 **Code Analysis** | Detects impacted modules, dependency graphs, and risk areas from commits |
-| 🧪 **Test Generation** | Generates functional, edge, API, and UI automation test cases |
-| ⚡ **Regression Optimization** | Selects only relevant tests, reducing redundant execution |
-| 📊 **Risk Prediction** | Calculates release risk score (0–100) with explainable factors |
-| 🚦 **CI/CD Gatekeeper** | Blocks or approves deployment based on risk assessment |
+| 📋 **Requirement Intelligence** | Extracts features, acceptance criteria, and edge cases from user stories. |
+| 🔍 **Code Analysis** | Detects impacted modules, dependency graphs, and risk areas from commits. |
+| 🧪 **Test Orchestration** | Dynamically generates and executes tests via **Selenium**, **Newman (API)**, and **OWASP ZAP**. |
+| 🛠️ **Auto-Remediation** | Identifies failing code/tests and suggests or applies AI-driven code fixes. |
+| 📊 **Risk Prediction** | Calculates a weighted release risk score (0–100) with explainable factors. |
+| 🚦 **CI/CD Gatekeeper** | Evaluates release risk and automatically gates deployments via GitHub Actions. |
 
 ---
 
@@ -25,10 +25,11 @@
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Next.js 14 (App Router), Tailwind CSS, Zustand |
-| Backend | Node.js (Express), PostgreSQL (Prisma ORM) |
-| AI Layer | OpenAI / LLM APIs (simulated for demo) |
-| CI/CD | GitHub Actions with AI Risk Gate |
+| **Frontend** | Next.js 16 (App Router), React 19, Tailwind CSS v4, Zustand |
+| **Backend** | Node.js (Express), PostgreSQL (Prisma ORM) |
+| **AI Layer** | Google Vertex AI, Gemini AI Studio, LangChain, LangGraph |
+| **Test Runners**| Selenium WebDriver, Postman/Newman, OWASP ZAP (DAST) |
+| **CI/CD** | GitHub Actions with AI Risk Gate |
 
 ---
 
@@ -36,13 +37,19 @@
 
 ### Prerequisites
 - Node.js 20+
-- PostgreSQL (optional — works in simulation mode without DB)
+- PostgreSQL (optional — works in simulation mode naturally)
+- (Optional) Google AI Studio API Key or Vertex AI GCP Account for live AI.
 
 ### 1. Backend Setup
 
 ```bash
 cd backend
 npm install
+
+# Set up environment variables
+cp .env.example .env
+
+# Start server
 npm run dev
 ```
 
@@ -53,6 +60,11 @@ Server starts at `http://localhost:5000`. Health check: `http://localhost:5000/a
 ```bash
 cd frontend
 npm install
+
+# Set up environment variables
+cp .env.example .env.local
+
+# Start dev server
 npm run dev
 ```
 
@@ -64,10 +76,12 @@ App opens at `http://localhost:3000`
 
 | Page | Description |
 |------|-------------|
-| **Dashboard** | Release risk score gauge, impacted modules, test metrics, AI recommendations |
-| **Test Studio** | Browse, filter, edit, and download AI-generated test cases |
-| **Insights** | "Why is this release risky?" — explainable AI analysis |
-| **Timeline** | Step-by-step view of each agent's contribution |
+| **Dashboard** | Release risk score gauge, impacted modules, sprint metrics, and AI recommendations. |
+| **Test Studio** | Run live website crawls, execute tests across Selenium/ZAP/Newman, and review results. |
+| **Code Fixes** | AI-driven debugging interface to analyze failing tests and apply auto-remediated patches. |
+| **Insights** | "Why is this release risky?" — historical trends and explainable AI analysis. |
+| **Timeline** | Step-by-step view of each autonomous agent's decision-making process. |
+| **Ask** | Conversational interface (Agent Chat) for deep-diving into repository and test data. |
 
 ---
 
@@ -75,18 +89,21 @@ App opens at `http://localhost:3000`
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/analyze-requirements` | Analyze user stories |
-| `POST` | `/api/analyze-commit` | Analyze git commits |
-| `POST` | `/api/generate-tests` | Generate test cases |
-| `POST` | `/api/predict-risk` | Predict release risk |
-| `GET`  | `/api/dashboard-data` | Full dashboard data |
-| `GET`  | `/api/health` | Health check |
+| `POST` | `/api/tests/run` | Triggers the autonomous testing pipeline (Selenium, Newman, ZAP) |
+| `POST` | `/api/tests/agent/trigger` | Triggers the LangGraph multi-agent flow |
+| `GET`  | `/api/dashboard` | Main dashboard analytics |
+| `GET`  | `/api/metrics` | Retrieval of testing metrics and history |
+| `POST` | `/api/code-fixes` | Generates AI patches for failures |
+| `POST` | `/api/risk/evaluate`| Evaluates current deployment risk |
+| `GET`  | `/api/health` | Service health check & AI mode status |
+
+*(and more specialized routes for requirements, commits, projects, etc.)*
 
 ---
 
 ## 🗄️ Database Schema
 
-10 Prisma models: `User`, `Project`, `ProjectMember`, `UserStory`, `Commit`, `TestCase`, `TestRun`, `TestRunCase`, `Defect`, `RiskReport`
+Managed via Prisma ORM (`backend/prisma/schema.prisma`).
 
 To set up the database:
 ```bash
@@ -99,44 +116,40 @@ npx prisma generate       # Generate client
 
 ## ⚙️ CI/CD Pipeline
 
-The GitHub Actions pipeline (`ci.yml`) includes:
+The GitHub Actions pipeline (`.github/workflows/ci.yml`) includes:
 1. **Lint & Type Check** — TypeScript + ESLint
-2. **Backend Tests** — Health check verification
-3. **Frontend Build** — Next.js production build
-4. **Risk Gate** — AI agent evaluates release risk and blocks if too high
+2. **Backend Tests** — Health check & dependency verification
+3. **Frontend Build** — Next.js production build (`npx next build`)
+4. **Risk Gate** — AI evaluates release risk and blocks if too high (`/api/risk/evaluate`)
 5. **Deploy** — Only runs on main branch after all gates pass
 
 ---
 
-## 🧠 Simulation Mode
+## 🧠 AI Engine Modes
 
-The app runs in **simulation mode** by default (no API keys needed). All AI agent responses are realistically simulated for demo purposes.
-
-To use real AI: Set `OPENAI_API_KEY` in `backend/.env`.
+The system operates based on your `.env` configuration:
+1. **Simulation Mode**: Default mode without API keys. Uses realistically simulated AI responses and test execution times.
+2. **Live Gemini/Vertex AI**: Set `GEMINI_API_KEY` or `VERTEX_PROJECT_ID` to use real LLMs (Gemini via Google Cloud or AI Studio) orchestrated with LangGraph.
 
 ---
 
 ## 📁 Project Structure
 
-```
-├── frontend/               # Next.js 14 App
-│   ├── src/app/            # Pages (dashboard, test-studio, insights, timeline)
-│   ├── src/components/     # Reusable components (Sidebar)
-│   └── src/lib/            # Store (Zustand), API client
-├── backend/                # Express API Server
+```text
+├── frontend/               # Next.js 16 Web Application
+│   ├── src/app/            # Pages (dashboard, test-studio, code-fixes, etc.)
+│   ├── src/components/     # UI Components
+│   └── src/lib/            # Zustand stores & API integration
+├── backend/                # Node.js/Express API Server
 │   ├── prisma/             # Database schema
-│   ├── src/routes/         # API endpoints
-│   └── src/services/       # AI simulation engine
-├── .github/workflows/      # CI/CD pipeline
+│   ├── src/routes/         # Controller endpoints
+│   └── src/services/       # LangGraph agents & test runners (Selenium/ZAP/Newman)
+├── .github/workflows/      # CI/CD pipeline definition
 └── README.md
 ```
 
 ---
 
-## 🎓 Built For
+## 📝 License
 
-Hackathons, demos, and interviews — demonstrating how AI can replace manual QA and act as an intelligent release gatekeeper.
-
----
-
-**Made with ❤️ by the AI Tester Agent Team**
+This project is licensed under the MIT License.

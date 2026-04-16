@@ -14,6 +14,10 @@ import {
   configureProject,
   fetchProjectInfo,
   fetchGitHubRepo,
+  fetchCodeFixes,
+  askCodeQuestion,
+  fetchMetrics,
+  submitDeploymentFeedback,
 } from './api';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -35,11 +39,22 @@ interface AppState {
   dashboardLoading: boolean;
   dashboardError: string | null;
   loadDashboard: () => Promise<void>;
+  refreshDashboard: () => Promise<void>;
+
+  // Code Fixes
+  codeFixes: AnyData | null;
+  codeFixesLoading: boolean;
+  runCodeAnalysis: (repoUrl?: string, refresh?: boolean) => Promise<void>;
+
+  // Ask AI
+  chatHistory: Array<{ role: 'user' | 'assistant'; content: string; references?: AnyData[]; confidence?: number }>;
+  chatLoading: boolean;
+  askQuestion: (question: string, repoUrl?: string) => Promise<void>;
 
   // Test generation
   generatedTests: AnyData | null;
   testsLoading: boolean;
-  runTestGeneration: (projectId?: string) => Promise<void>;
+  runTestGeneration: (projectId?: string, refresh?: boolean) => Promise<void>;
 
   // Risk prediction
   riskReport: AnyData | null;
@@ -59,6 +74,12 @@ interface AppState {
   // Active tab
   activeTab: string;
   setActiveTab: (tab: string) => void;
+
+  // Metrics
+  metrics: AnyData | null;
+  metricsLoading: boolean;
+  loadMetrics: () => Promise<void>;
+  submitFeedback: (predictionId: string, outcome: 'smooth' | 'minor' | 'major') => Promise<AnyData | null>;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -75,6 +96,8 @@ export const useAppStore = create<AppState>((set) => ({
         requirementAnalysis: null,
         commitAnalysis: null,
         dashboard: null,
+        codeFixes: null,
+        chatHistory: [],
       });
     } catch {
       // silent fail
@@ -118,14 +141,26 @@ export const useAppStore = create<AppState>((set) => ({
       });
     }
   },
+  refreshDashboard: async () => {
+    set({ dashboardLoading: true, dashboardError: null });
+    try {
+      const data = await fetchDashboardData(true); // pass refresh=true
+      set({ dashboard: data, dashboardLoading: false });
+    } catch (error) {
+      set({
+        dashboardError: error instanceof Error ? error.message : 'Failed to refresh dashboard',
+        dashboardLoading: false,
+      });
+    }
+  },
 
   // ─── Test Generation ──────────────────────────────────────────────────────
   generatedTests: null,
   testsLoading: false,
-  runTestGeneration: async (projectId = 'demo') => {
+  runTestGeneration: async (projectId = 'demo', refresh = false) => {
     set({ testsLoading: true });
     try {
-      const data = await generateTests(projectId);
+      const data = await generateTests(projectId, undefined, refresh);
       set({ generatedTests: data, testsLoading: false });
     } catch {
       set({ testsLoading: false });
@@ -174,4 +209,71 @@ export const useAppStore = create<AppState>((set) => ({
   // ─── Active Tab ───────────────────────────────────────────────────────────
   activeTab: 'dashboard',
   setActiveTab: (tab: string) => set({ activeTab: tab }),
+
+  // ─── Code Fixes ───────────────────────────────────────────────────────────
+  codeFixes: null,
+  codeFixesLoading: false,
+  runCodeAnalysis: async (repoUrl, refresh = false) => {
+    set({ codeFixesLoading: true });
+    try {
+      const data = await fetchCodeFixes(repoUrl, refresh);
+      set({ codeFixes: data, codeFixesLoading: false });
+    } catch {
+      // Set error sentinel so the page doesn't re-trigger in a loop
+      set({ codeFixes: { error: true, fixes: [] }, codeFixesLoading: false });
+    }
+  },
+
+  // ─── Ask AI ───────────────────────────────────────────────────────────────
+  chatHistory: [],
+  chatLoading: false,
+  askQuestion: async (question, repoUrl) => {
+    // Add user message immediately
+    set((state) => ({
+      chatHistory: [...state.chatHistory, { role: 'user', content: question }],
+      chatLoading: true,
+    }));
+    try {
+      const data: AnyData = await askCodeQuestion(question, repoUrl);
+      set((state) => ({
+        chatHistory: [
+          ...state.chatHistory,
+          { role: 'assistant', content: data.answer, references: data.references, confidence: data.confidence },
+        ],
+        chatLoading: false,
+      }));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'An error occurred while communicating with the AI. Please try again.';
+      set((state) => ({
+        chatHistory: [
+          ...state.chatHistory,
+          { role: 'assistant', content: errorMessage },
+        ],
+        chatLoading: false,
+      }));
+    }
+  },
+
+  // ─── Metrics ──────────────────────────────────────────────────────────────
+  metrics: null,
+  metricsLoading: false,
+  loadMetrics: async () => {
+    set({ metricsLoading: true });
+    try {
+      const data = await fetchMetrics();
+      set({ metrics: data, metricsLoading: false });
+    } catch {
+      set({ metricsLoading: false });
+    }
+  },
+  submitFeedback: async (predictionId: string, outcome: 'smooth' | 'minor' | 'major') => {
+    try {
+      const data: AnyData = await submitDeploymentFeedback(predictionId, outcome);
+      const metrics = await fetchMetrics();
+      set({ metrics });
+      return data;
+    } catch {
+      return null;
+    }
+  },
 }));

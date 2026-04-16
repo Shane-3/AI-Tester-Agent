@@ -16,6 +16,9 @@ const testsRoutes = require('./routes/tests');
 const riskRoutes = require('./routes/risk');
 const dashboardRoutes = require('./routes/dashboard');
 const projectRoutes = require('./routes/project');
+const codeFixesRoutes = require('./routes/code-fixes');
+const askRoutes = require('./routes/ask');
+const metricsRoutes = require('./routes/metrics');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -44,6 +47,9 @@ app.use('/api', testsRoutes);
 app.use('/api', riskRoutes);
 app.use('/api', dashboardRoutes);
 app.use('/api', projectRoutes);
+app.use('/api', codeFixesRoutes);
+app.use('/api', askRoutes);
+app.use('/api', metricsRoutes);
 
 // ─── Health Check ──────────────────────────────────────────────────────────────
 
@@ -53,7 +59,7 @@ app.get('/api/health', (req, res) => {
     service: 'AI Tester Agent API',
     version: '1.0.0',
     timestamp: new Date().toISOString(),
-    mode: process.env.OPENAI_API_KEY ? 'live' : 'simulation',
+    mode: process.env.GEMINI_API_KEY ? 'live' : 'simulation',
   });
 });
 
@@ -78,7 +84,7 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`\n🚀 AI Tester Agent API running on http://localhost:${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`🤖 Mode: ${process.env.OPENAI_API_KEY ? 'Live AI' : 'Simulation'}\n`);
+  console.log(`🤖 Mode: ${process.env.GEMINI_API_KEY ? 'Live AI' : 'Simulation'}\n`);
 });
 
 module.exports = app;

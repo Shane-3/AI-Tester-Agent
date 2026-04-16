@@ -1,0 +1,130 @@
+{
+  "runs": [
+    {
+      "totalTests": 38,
+      "pipelineDurationMs": 50738,
+      "pipelineDurationFormatted": "50s",
+      "manualEstimateMs": 67500000,
+      "manualEstimateFormatted": "18h 45m",
+      "velocityImprovement": 99.9,
+      "hoursSaved": 18.7,
+      "speedMultiplier": 1330,
+      "testBreakdown": {
+        "functional": 9,
+        "security": 5,
+        "api": 9,
+        "ui": 2,
+        "other": 13
+      },
+      "timestamp": "2026-04-16T06:14:40.179Z"
+    },
+    {
+      "totalTests": 49,
+      "pipelineDurationMs": 53460,
+      "pipelineDurationFormatted": "53s",
+      "manualEstimateMs": 83100000,
+      "manualEstimateFormatted": "23h 5m",
+      "velocityImprovement": 99.9,
+      "hoursSaved": 23.1,
+      "speedMultiplier": 1554,
+      "testBreakdown": {
+        "functional": 10,
+        "security": 5,
+        "api": 16,
+        "ui": 3,
+        "other": 15
+      },
+      "timestamp": "2026-04-16T06:22:38.872Z"
+    },
+    {
+      "totalTests": 49,
+      "pipelineDurationMs": 57750,
+      "pipelineDurationFormatted": "57s",
+      "manualEstimateMs": 83100000,
+      "manualEstimateFormatted": "23h 5m",
+      "velocityImprovement": 99.9,
+      "hoursSaved": 23.1,
+      "speedMultiplier": 1439,
+      "testBreakdown": {
+        "functional": 10,
+        "security": 5,
+        "api": 16,
+        "ui": 3,
+        "other": 15
+      },
+      "timestamp": "2026-04-16T06:23:03.858Z"
+    },
+    {
+      "totalTests": 0,
+      "pipelineDurationMs": 30403,
+      "pipelineDurationFormatted": "30s",
+      "manualEstimateMs": 0,
+      "manualEstimateFormatted": "0ms",
+      "velocityImprovement": 0,
+      "hoursSaved": 0,
+      "speedMultiplier": 0,
+      "testBreakdown": {
+        "functional": 0,
+        "security": 0,
+        "api": 0,
+        "ui": 0,
+        "other": 0
+      },
+      "timestamp": "2026-04-16T06:31:13.070Z"
+    },
+    {
+      "totalTests": 48,
+      "pipelineDurationMs": 59162,
+      "pipelineDurationFormatted": "59s",
+      "manualEstimateMs": 81900000,
+      "manualEstimateFormatted": "22h 45m",
+      "velocityImprovement": 99.9,
+      "hoursSaved": 22.7,
+      "speedMultiplier": 1384,
+      "testBreakdown": {
+        "functional": 10,
+        "security": 5,
+        "api": 15,
+        "ui": 3,
+        "other": 15
+      },
+      "timestamp": "2026-04-16T06:32:01.834Z"
+    },
+    {
+      "totalTests": 49,
+      "pipelineDurationMs": 56496,
+      "pipelineDurationFormatted": "56s",
+      "manualEstimateMs": 83100000,
+      "manualEstimateFormatted": "23h 5m",
+      "velocityImprovement": 99.9,
+      "hoursSaved": 23.1,
+      "speedMultiplier": 1471,
+      "testBreakdown": {
+        "functional": 10,
+        "security": 5,
+        "api": 16,
+        "ui": 3,
+        "other": 15
+      },
+      "timestamp": "2026-04-16T06:58:47.993Z"
+    },
+    {
+      "totalTests": 49,
+      "pipelineDurationMs": 53133,
+      "pipelineDurationFormatted": "53s",
+      "manualEstimateMs": 83100000,
+      "manualEstimateFormatted": "23h 5m",
+      "velocityImprovement": 99.9,
+      "hoursSaved": 23.1,
+      "speedMultiplier": 1564,
+      "testBreakdown": {
+        "functional": 10,
+        "security": 5,
+        "api": 16,
+        "ui": 3,
+        "other": 15
+      },
+      "timestamp": "2026-04-16T06:59:05.197Z"
+    }
+  ]
+}

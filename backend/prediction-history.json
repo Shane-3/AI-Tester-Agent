@@ -1,0 +1,112 @@
+{
+  "predictions": [
+    {
+      "id": "pred-001",
+      "timestamp": "2026-04-09T05:58:51.673Z",
+      "riskScore": 72,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": "major",
+      "correct": true
+    },
+    {
+      "id": "pred-002",
+      "timestamp": "2026-04-11T05:58:51.673Z",
+      "riskScore": 35,
+      "riskLevel": "low",
+      "decision": "APPROVED",
+      "outcome": "smooth",
+      "correct": true
+    },
+    {
+      "id": "pred-003",
+      "timestamp": "2026-04-13T05:58:51.673Z",
+      "riskScore": 58,
+      "riskLevel": "medium",
+      "decision": "APPROVED",
+      "outcome": "minor",
+      "correct": true
+    },
+    {
+      "id": "pred-004",
+      "timestamp": "2026-04-14T05:58:51.673Z",
+      "riskScore": 45,
+      "riskLevel": "medium",
+      "decision": "APPROVED",
+      "outcome": "smooth",
+      "correct": true
+    },
+    {
+      "id": "pred-005",
+      "timestamp": "2026-04-15T05:58:51.673Z",
+      "riskScore": 28,
+      "riskLevel": "low",
+      "decision": "APPROVED",
+      "outcome": "minor",
+      "correct": false
+    },
+    {
+      "id": "pred-006",
+      "timestamp": "2026-04-16T06:14:40.180Z",
+      "riskScore": 65,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": "smooth",
+      "correct": false
+    },
+    {
+      "id": "pred-007",
+      "timestamp": "2026-04-16T06:22:38.873Z",
+      "riskScore": 69,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-008",
+      "timestamp": "2026-04-16T06:23:03.858Z",
+      "riskScore": 68,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-009",
+      "timestamp": "2026-04-16T06:31:13.071Z",
+      "riskScore": 95,
+      "riskLevel": "critical",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-010",
+      "timestamp": "2026-04-16T06:32:01.834Z",
+      "riskScore": 70,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-011",
+      "timestamp": "2026-04-16T06:58:47.995Z",
+      "riskScore": 64,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-012",
+      "timestamp": "2026-04-16T06:59:05.198Z",
+      "riskScore": 65,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    }
+  ]
+}

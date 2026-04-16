@@ -54,6 +54,8 @@ prisma/migrations/
 # Misc
 *.pem
 .vercel
+service-account*.json
+risk-history.json
 
 # AI tool files
 AGENTS.md

@@ -147,6 +147,127 @@ async function crawlWebsite(url) {
     siteType = 'documentation';
   }
 
+  // ── Extended Analysis (for comprehensive test suite) ────────────────────
+
+  // Language attribute
+  const langAttr = $('html').attr('lang') || '';
+
+  // Inline scripts and styles (security/CSP concerns)
+  const inlineScripts = [];
+  $('script:not([src])').each((_, el) => {
+    const content = $(el).html() || '';
+    if (content.trim().length > 0) inlineScripts.push(content.substring(0, 200));
+  });
+  const inlineStyles = [];
+  $('style').each((_, el) => {
+    const content = $(el).html() || '';
+    if (content.trim().length > 0) inlineStyles.push(content.length);
+  });
+
+  // Form accessibility (labels for inputs)
+  const formAccessibility = [];
+  $('form').each((_, form) => {
+    const inputs = [];
+    $(form).find('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea, select').each((_, inp) => {
+      const inputId = $(inp).attr('id') || '';
+      const inputName = $(inp).attr('name') || '';
+      const hasLabel = inputId ? $(`label[for="${inputId}"]`).length > 0 : false;
+      const hasAriaLabel = !!$(inp).attr('aria-label') || !!$(inp).attr('aria-labelledby');
+      const hasPlaceholder = !!$(inp).attr('placeholder');
+      inputs.push({ id: inputId, name: inputName, hasLabel, hasAriaLabel, hasPlaceholder, type: $(inp).attr('type') || 'text' });
+    });
+    formAccessibility.push({ inputs });
+  });
+
+  // ARIA landmarks and roles
+  const ariaLandmarks = {
+    main: $('[role="main"], main').length,
+    nav: $('[role="navigation"], nav').length,
+    banner: $('[role="banner"], header').length,
+    contentinfo: $('[role="contentinfo"], footer').length,
+    search: $('[role="search"]').length,
+  };
+
+  // Skip navigation link
+  const hasSkipLink = $('a[href="#main"], a[href="#content"], a[href="#main-content"], .skip-link, .skip-nav, a.skip-to-content').length > 0;
+
+  // Cookie analysis from headers
+  const cookies = [];
+  const rawCookies = headers['set-cookie'];
+  if (rawCookies) {
+    const cookieArr = Array.isArray(rawCookies) ? rawCookies : [rawCookies];
+    for (const c of cookieArr) {
+      const lower = c.toLowerCase();
+      cookies.push({
+        raw: c.substring(0, 200),
+        httpOnly: lower.includes('httponly'),
+        secure: lower.includes('secure'),
+        sameSite: lower.includes('samesite'),
+      });
+    }
+  }
+
+  // Compression
+  const contentEncoding = headers['content-encoding'] || '';
+  const hasCompression = !!contentEncoding && (contentEncoding.includes('gzip') || contentEncoding.includes('br') || contentEncoding.includes('deflate'));
+
+  // Server info disclosure
+  const serverHeader = headers['server'] || '';
+  const xPoweredBy = headers['x-powered-by'] || '';
+
+  // Structured data (JSON-LD)
+  const jsonLdScripts = [];
+  $('script[type="application/ld+json"]').each((_, el) => {
+    try {
+      const content = $(el).html() || '';
+      if (content.trim()) jsonLdScripts.push(JSON.parse(content));
+    } catch {}
+  });
+
+  // Mixed content detection (HTTP resources on HTTPS page)
+  const mixedContent = [];
+  if (url.startsWith('https://')) {
+    $('script[src^="http://"], link[href^="http://"], img[src^="http://"], iframe[src^="http://"]').each((_, el) => {
+      const src = $(el).attr('src') || $(el).attr('href') || '';
+      if (src.startsWith('http://')) mixedContent.push(src.substring(0, 200));
+    });
+  }
+
+  // Noscript fallback
+  const hasNoscript = $('noscript').length > 0;
+
+  // Deprecated HTML tags
+  const deprecatedTags = [];
+  const deprecated = ['center', 'font', 'marquee', 'blink', 'frame', 'frameset', 'bgsound'];
+  for (const tag of deprecated) {
+    const count = $(tag).length;
+    if (count > 0) deprecatedTags.push({ tag, count });
+  }
+
+  // Duplicate meta tags
+  const metaDescCount = $('meta[name="description"]').length;
+  const metaTitleCount = $('title').length;
+
+  // External script domains (third-party dependency analysis)
+  const externalScriptDomains = new Set();
+  const origin = new URL(url).origin;
+  $('script[src]').each((_, el) => {
+    const src = $(el).attr('src') || '';
+    try {
+      const scriptUrl = new URL(src, url);
+      if (scriptUrl.origin !== origin) externalScriptDomains.add(scriptUrl.hostname);
+    } catch {}
+  });
+
+  // Tab index misuse
+  const positiveTabindex = $('[tabindex]').filter((_, el) => {
+    const val = parseInt($(el).attr('tabindex') || '0', 10);
+    return val > 0;
+  }).length;
+
+  // Detect favicon
+  const favicon = $('link[rel="icon"]').attr('href') || $('link[rel="shortcut icon"]').attr('href') || '';
+
   return {
     url,
     success: true,
@@ -155,19 +276,64 @@ async function crawlWebsite(url) {
     headers,
     title,
     meta: { description: metaDescription, viewport: metaViewport, keywords: metaKeywords, charset },
+    metaDescription,
+    viewport: metaViewport,
     openGraph: { title: ogTitle, description: ogDescription, image: ogImage },
+    ogTags: { 'og:title': ogTitle, 'og:description': ogDescription, 'og:image': ogImage, 'og:url': $('meta[property="og:url"]').attr('content') || '' },
     twitterCard,
     canonical,
     headings,
-    links: { total: links.length, internal: links.filter(l => !l.isExternal).length, external: links.filter(l => l.isExternal).length, items: links.slice(0, 50) },
+    links: {
+      total: links.length,
+      internal: links.filter(l => !l.isExternal).length,
+      external: links.filter(l => l.isExternal).length,
+      items: links.slice(0, 50),
+      internalUrls: links.filter(l => !l.isExternal).map(l => l.href),
+      externalUrls: links.filter(l => l.isExternal).map(l => l.href),
+    },
     images: { total: images.length, withoutAlt: images.filter(i => !i.hasAlt).length, items: images.slice(0, 30) },
+    imageDetails: images.slice(0, 30),
     forms,
     scripts: scripts.length,
     stylesheets: stylesheets.length,
-    securityHeaders,
+    securityHeaders: {
+      ...securityHeaders,
+      // Also use lowercase header names for direct lookup in dynamic tests
+      'x-frame-options': securityHeaders.xFrameOptions,
+      'x-content-type-options': securityHeaders.xContentTypeOptions,
+      'x-xss-protection': securityHeaders.xXssProtection,
+      'strict-transport-security': securityHeaders.strictTransportSecurity,
+      'content-security-policy': securityHeaders.contentSecurityPolicy,
+      'referrer-policy': securityHeaders.referrerPolicy,
+      'permissions-policy': headers['permissions-policy'] || null,
+      'x-dns-prefetch-control': headers['x-dns-prefetch-control'] || null,
+    },
     siteType,
     htmlSize: html.length,
+    favicon,
+    lang: langAttr,
+    html: html.substring(0, 50000), // Truncated for site-type content checks
     crawledAt: new Date().toISOString(),
+    // Extended data for comprehensive testing
+    langAttr,
+    inlineScripts: inlineScripts.length,
+    inlineStyles: inlineStyles.length,
+    formAccessibility,
+    ariaLandmarks,
+    hasSkipLink,
+    cookies,
+    contentEncoding,
+    hasCompression,
+    serverHeader,
+    xPoweredBy,
+    jsonLdScripts: jsonLdScripts.length,
+    mixedContent,
+    hasNoscript,
+    deprecatedTags,
+    metaDescCount,
+    metaTitleCount,
+    externalScriptDomains: [...externalScriptDomains],
+    positiveTabindex,
   };
 }
 

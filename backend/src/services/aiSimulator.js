@@ -11,7 +11,7 @@
 // ─── Project Context (persisted across calls) ────────────────────────────────
 
 let projectContext = {
-  name: 'E-Commerce Platform v2.4',
+  name: '',
   repoUrl: '',
   websiteUrl: '',
   description: '',

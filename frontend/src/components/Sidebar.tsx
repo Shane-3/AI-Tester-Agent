@@ -7,12 +7,16 @@ import {
   FlaskConical,
   Lightbulb,
   Activity,
+  Code2,
+  MessageSquare,
 } from "lucide-react";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/test-studio", label: "Test Studio", icon: FlaskConical },
   { href: "/insights", label: "Insights", icon: Lightbulb },
+  { href: "/code-fixes", label: "Code Intelligence", icon: Code2 },
+  { href: "/ask", label: "Ask AI", icon: MessageSquare },
   { href: "/timeline", label: "Timeline", icon: Activity },
 ];
 

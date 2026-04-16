@@ -21,6 +21,8 @@ import {
   Settings,
   ExternalLink,
   Loader2,
+  TrendingDown,
+  TrendingUp,
 } from "lucide-react";
 
 // ─── Project Config Panel ────────────────────────────────────────────────────
@@ -218,11 +220,14 @@ function ModuleCard({ module }: { module: { name: string; impact: string; filesC
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const { dashboard, dashboardLoading, loadDashboard } = useAppStore();
+  const { dashboard, dashboardLoading, loadDashboard, refreshDashboard } = useAppStore();
 
   useEffect(() => {
-    loadDashboard();
-  }, [loadDashboard]);
+    // Only fetch if no data yet (prevents re-running AI pipeline on tab switches)
+    if (!dashboard && !dashboardLoading) {
+      loadDashboard();
+    }
+  }, [dashboard, dashboardLoading, loadDashboard]);
 
   if (dashboardLoading || !dashboard) {
     return (
@@ -249,17 +254,117 @@ export default function DashboardPage() {
   const { riskOverview, testMetrics, impactedModules } = dashboard;
   const passRate = testMetrics.totalGenerated > 0 ? Math.round((testMetrics.byStatus.passed / testMetrics.totalGenerated) * 100) : 0;
 
+  // ─── Unconfigured State ─────────────────────────────────────────────────────
+  if (dashboard.unconfigured) {
+    return (
+      <div style={{ display: "flex" }}>
+        <Sidebar />
+        <main style={{ marginLeft: 220, padding: 24, flex: 1, width: "calc(100% - 220px)" }}>
+          <div style={{ marginBottom: 20 }}>
+            <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 2 }}>Release Dashboard</h1>
+            <p style={{ color: "var(--text-muted)", fontSize: 12 }}>
+              Configure your project to get started
+            </p>
+          </div>
+
+          <ProjectConfigPanel />
+
+          {/* Welcome / Setup prompt */}
+          <div className="glass-card" style={{ padding: 40, textAlign: "center", marginBottom: 20 }}>
+            <Globe size={36} color="var(--accent-blue)" style={{ margin: "0 auto 16px", opacity: 0.7 }} />
+            <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Welcome to AI Tester Agent</h2>
+            <p style={{ fontSize: 13, color: "var(--text-secondary)", maxWidth: 480, margin: "0 auto 20px", lineHeight: 1.6 }}>
+              Enter your <strong>project name</strong> and <strong>website URL</strong> above, then click <strong>Save &amp; Connect</strong> to run the AI-powered test pipeline. Optionally add a GitHub repository for code intelligence features.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
+              <div className="stat-card">
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <FlaskConical size={16} color="var(--text-muted)" />
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Tests Executed</span>
+                </div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: "var(--text-muted)" }}>0</div>
+              </div>
+              <div className="stat-card">
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <CheckCircle2 size={16} color="var(--text-muted)" />
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Tests Passed</span>
+                </div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: "var(--text-muted)" }}>0</div>
+              </div>
+              <div className="stat-card">
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <XCircle size={16} color="var(--text-muted)" />
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Tests Failed</span>
+                </div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: "var(--text-muted)" }}>0</div>
+              </div>
+              <div className="stat-card">
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <Zap size={16} color="var(--text-muted)" />
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Pass Rate</span>
+                </div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: "var(--text-muted)" }}>0%</div>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: "flex" }}>
       <Sidebar />
       <main style={{ marginLeft: 220, padding: 24, flex: 1, width: "calc(100% - 220px)" }}>
         {/* Header */}
-        <div style={{ marginBottom: 20 }}>
-          <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 2 }}>Release Dashboard</h1>
-          <p style={{ color: "var(--text-muted)", fontSize: 12 }}>
-            {dashboard.project?.name} &middot; Last updated {new Date(dashboard.lastUpdated).toLocaleTimeString()}
-          </p>
+        <div style={{ marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+          <div>
+            <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 2 }}>Release Dashboard</h1>
+            <p style={{ color: "var(--text-muted)", fontSize: 12 }}>
+              {dashboard.project?.name} &middot; Last updated {new Date(dashboard.lastUpdated).toLocaleTimeString()}
+            </p>
+          </div>
+          <div>
+            <button
+              className="btn-primary"
+              onClick={() => refreshDashboard()}
+              style={{ display: "flex", alignItems: "center", gap: 6 }}
+            >
+              <Zap size={13} /> Re-run After Fix
+            </button>
+          </div>
         </div>
+
+        {/* Delta Card (Feature 2) */}
+        {dashboard.delta?.hasDelta && (
+          <div className="glass-card animated-pulse" style={{ padding: "16px 20px", marginBottom: 20, background: "rgba(59, 130, 246, 0.05)", border: "1px solid rgba(59, 130, 246, 0.2)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h3 style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-blue)", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                  <TrendingDown size={14} /> Risk Improved
+                </h3>
+                <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                  Compared to the previous run before fixes
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Risk Score</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <span style={{ color: "var(--text-muted)", textDecoration: "line-through", fontSize: 14 }}>{dashboard.delta.previousScore}</span>
+                    <span style={{ color: "var(--accent-green)" }}>{dashboard.delta.currentScore}</span>
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Tests Passed</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: dashboard.delta.passedChange > 0 ? "var(--status-green)" : "var(--text-primary)" }}>
+                    {dashboard.delta.passedChange > 0 ? "+" : ""}{dashboard.delta.passedChange}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <ProjectConfigPanel />
 
@@ -288,7 +393,7 @@ export default function DashboardPage() {
 
         {/* Stats */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
-          <StatsCard icon={FlaskConical} label="Tests Executed" value={testMetrics.totalGenerated} sub={`${testMetrics.coverage.functional} functional, ${testMetrics.coverage.api} API`} color="var(--accent-blue)" />
+          <StatsCard icon={FlaskConical} label="Tests Executed" value={testMetrics.totalGenerated} sub={`${testMetrics.coverage.functional || 0} frontend, ${testMetrics.coverage.security || 0} security, ${testMetrics.coverage.accessibility || 0} a11y, ${testMetrics.coverage.performance || 0} perf`} color="var(--accent-blue)" />
           <StatsCard icon={CheckCircle2} label="Tests Passed" value={testMetrics.byStatus.passed} sub={`${passRate}% pass rate`} color="var(--accent-green)" />
           <StatsCard icon={XCircle} label="Tests Failed" value={testMetrics.byStatus.failed} color="var(--accent-red)" />
           <StatsCard icon={Zap} label="Pass Rate" value={`${passRate}%`} sub={dashboard.pipelineDuration ? `Pipeline: ${dashboard.pipelineDuration}` : ""} color={passRate >= 80 ? "var(--accent-green)" : passRate >= 60 ? "var(--accent-amber)" : "var(--accent-red)"} />

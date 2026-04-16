@@ -9,6 +9,8 @@
 const express = require('express');
 const router = express.Router();
 const { setProjectContext, getProjectContext, setCachedGitHubData } = require('../services/aiSimulator');
+const { invalidateDashboardCache } = require('./dashboard');
+const { invalidateTestCache } = require('../services/testRunner');
 
 // ─── Configure Project ──────────────────────────────────────────────────────
 
@@ -23,6 +25,8 @@ router.post('/configure-project', (req, res) => {
     }
 
     setProjectContext({ name, websiteUrl, repoUrl, description });
+    invalidateDashboardCache(); // Clear cached dashboard so next load re-runs pipeline
+    invalidateTestCache(); // Clear cached test results so Test Studio re-runs with new project
 
     res.json({
       success: true,
