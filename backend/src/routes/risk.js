@@ -10,7 +10,7 @@
 const express = require('express');
 const router = express.Router();
 const { crawlWebsite } = require('../services/websiteCrawler');
-const { runTests, summarizeResults } = require('../services/testRunner');
+const { runTests, summarizeResults, getCachedTestResults } = require('../services/testRunner');
 const { analyzeRisk } = require('../services/geminiAgent');
 const { getProjectContext } = require('../services/aiSimulator');
 
@@ -22,12 +22,14 @@ function loadRiskHistory() {
   try {
     if (fs.existsSync(HISTORY_FILE)) {
       const data = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf-8'));
-      return Array.isArray(data) ? data : [];
+      // Support both old flat array format and new per-URL map format
+      if (Array.isArray(data)) return {}; // discard old format
+      return typeof data === 'object' ? data : {};
     }
   } catch (err) {
     console.warn('[Risk] Could not load history:', err.message);
   }
-  return [];
+  return {};
 }
 
 function saveRiskHistory(history) {
@@ -38,31 +40,38 @@ function saveRiskHistory(history) {
   }
 }
 
-let riskHistory = loadRiskHistory();
+// History is now a map: { url: [ {timestamp, score, level}, ... ] }
+let riskHistoryMap = loadRiskHistory();
 
 /**
- * Build risk trend data from REAL history only — no fake padding.
+ * Build risk trend data from REAL history for a specific URL only.
  */
-function buildRiskTrend(currentScore, currentLevel) {
+function buildRiskTrend(currentScore, currentLevel, url) {
   const now = new Date();
+  const key = url || 'default';
 
-  // Add current run to history
-  riskHistory.push({
+  // Get or create history for this URL
+  if (!riskHistoryMap[key]) riskHistoryMap[key] = [];
+  let urlHistory = riskHistoryMap[key];
+
+  // Add current run
+  urlHistory.push({
     timestamp: now.toISOString(),
     score: currentScore,
     level: currentLevel,
   });
 
-  // Keep last 20 runs max
-  if (riskHistory.length > 20) riskHistory = riskHistory.slice(-20);
+  // Keep last 20 runs max per URL
+  if (urlHistory.length > 20) urlHistory = urlHistory.slice(-20);
+  riskHistoryMap[key] = urlHistory;
 
   // Persist to disk
-  saveRiskHistory(riskHistory);
+  saveRiskHistory(riskHistoryMap);
 
-  // Build trend entries from real data only
-  const entries = riskHistory.map((entry, index) => {
+  // Build trend entries from this URL's data only
+  const entries = urlHistory.map((entry, index) => {
     const date = new Date(entry.timestamp);
-    const isLast = index === riskHistory.length - 1;
+    const isLast = index === urlHistory.length - 1;
     return {
       label: isLast
         ? 'Current'
@@ -93,7 +102,7 @@ function buildRiskTrend(currentScore, currentLevel) {
     avgScore: Math.round(scores.reduce((a, b) => a + b, 0) / scores.length),
     minScore: Math.min(...scores),
     maxScore: Math.max(...scores),
-    totalRuns: riskHistory.length,
+    totalRuns: urlHistory.length,
   };
 }
 function buildDetailedFactors(testResults, siteAnalysis, summary) {
@@ -420,10 +429,23 @@ router.post('/predict-risk', async (req, res) => {
     const ctx = getProjectContext();
     const websiteUrl = ctx.websiteUrl || 'https://example.com';
 
-    // Crawl and test
-    const siteAnalysis = await crawlWebsite(websiteUrl);
-    const testResults = await runTests(websiteUrl, siteAnalysis);
-    const summary = summarizeResults(testResults);
+    let siteAnalysis, testResults, summary;
+
+    // Reuse cached results from the dashboard pipeline (includes Selenium, Newman, ZAP)
+    // so that Insights shows the same test counts and pass rates as Dashboard/Test Studio.
+    const cached = getCachedTestResults();
+    if (cached && cached.testResults && cached.testResults.length > 0) {
+      console.log(`[Risk] Using cached pipeline results (${cached.testResults.length} tests)`);
+      siteAnalysis = cached.siteAnalysis;
+      testResults = cached.testResults;
+      summary = cached.summary || summarizeResults(testResults);
+    } else {
+      // No cache — fall back to fresh crawl + base tests only
+      console.log('[Risk] No cached results — running fresh crawl and tests');
+      siteAnalysis = await crawlWebsite(websiteUrl);
+      testResults = await runTests(websiteUrl, siteAnalysis);
+      summary = summarizeResults(testResults);
+    }
 
     // AI or rule-based risk analysis
     const riskAnalysis = await analyzeRisk(siteAnalysis, testResults, summary);
@@ -441,8 +463,8 @@ router.post('/predict-risk', async (req, res) => {
     // Build gatekeeper conditions (variable count)
     const conditions = buildGatekeeperConditions(blocked, factors, summary, siteAnalysis);
 
-    // Build risk trend
-    const trend = buildRiskTrend(riskScore, riskLevel);
+    // Build risk trend (scoped to this URL)
+    const trend = buildRiskTrend(riskScore, riskLevel, websiteUrl);
 
     // Category breakdown for the frontend
     const categoryBreakdown = factors

@@ -17,7 +17,7 @@ const { runTests, summarizeResults, cacheTestResults } = require('./testRunner')
 const { analyzeRisk, analyzeSitePurpose } = require('./geminiAgent');
 const { runSeleniumTests } = require('./seleniumRunner');
 const { runNewmanTests } = require('./newmanRunner');
-const { runZapScan } = require('./zapScanner');
+const { runSecurityScan } = require('./securityScanner');
 const { calculateSprintVelocity, recordPrediction } = require('./metricsEngine');
 
 
@@ -176,35 +176,33 @@ async function testRunnerAgent(state) {
 }
 
 /**
- * Node 3: Security Scanner Agent (OWASP ZAP)
- * Runs ZAP scans when available, merges into test results
+ * Node 3: Security Scanner Agent (Lightweight)
+ * Runs real HTTP-based security checks, merges into test results
  */
 async function securityScannerAgent(state) {
   const startMs = Date.now();
   try {
-    const zapResults = await runZapScan(state.url, state.siteAnalysis);
+    const secResults = await runSecurityScan(state.url, state.siteAnalysis);
     const durationMs = Date.now() - startMs;
 
-    // Merge ZAP results into the combined test results
-    const allResults = [...state.allTestResults, ...zapResults];
+    // Merge security results into the combined test results
+    const allResults = [...state.allTestResults, ...secResults];
     const summary = summarizeResults(allResults);
 
-    // Cache updated results with ZAP included
+    // Cache updated results with security scan included
     cacheTestResults(state.url, state.siteAnalysis, allResults, summary);
 
     return {
       ...state,
-      zapResults,
+      zapResults: secResults,
       allTestResults: allResults,
       testSummary: summary,
       agentTimeline: [...state.agentTimeline, {
-        id: 'agent-security', agent: 'Security Scanner Agent (OWASP ZAP)', status: 'completed',
+        id: 'agent-security', agent: 'Security Scanner Agent', status: 'completed',
         startedAt: new Date(startMs).toISOString(),
         completedAt: new Date(startMs + durationMs).toISOString(),
         durationMs, duration: formatDuration(durationMs),
-        summary: zapResults.length > 0
-          ? `ZAP scan found ${zapResults.filter(r => !r.passed).length} vulnerabilities across ${zapResults.length} security checks`
-          : 'ZAP not available — using header-based security checks from base tests',
+        summary: `Security scan found ${secResults.filter(r => !r.passed).length} issues across ${secResults.length} checks (SSL, CSP, HSTS, cookies, CORS, etc.)`,
       }],
     };
   } catch (err) {
@@ -212,7 +210,7 @@ async function securityScannerAgent(state) {
       ...state,
       errors: [...state.errors, { agent: 'security', error: err.message }],
       agentTimeline: [...state.agentTimeline, {
-        id: 'agent-security', agent: 'Security Scanner Agent (OWASP ZAP)', status: 'skipped',
+        id: 'agent-security', agent: 'Security Scanner Agent', status: 'skipped',
         startedAt: new Date(startMs).toISOString(),
         completedAt: new Date().toISOString(),
         durationMs: Date.now() - startMs, duration: formatDuration(Date.now() - startMs),

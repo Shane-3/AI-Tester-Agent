@@ -15,9 +15,16 @@ const METRICS_FILE = path.join(__dirname, '..', '..', 'sprint-metrics.json');
 const PREDICTIONS_FILE = path.join(__dirname, '..', '..', 'prediction-history.json');
 
 
-const MANUAL_MINUTES_PER_TEST = 30;       // Industry avg: 30min to write+execute a manual test
-const MANUAL_MINUTES_PER_SECURITY_TEST = 45; // Security tests take longer
-const MANUAL_MINUTES_PER_API_TEST = 20;      // API tests are faster manually
+// Realistic manual QA estimates (minutes per test to manually execute + verify).
+// These reflect the time a QA engineer spends *running* each check, not writing the test.
+// Ref: industry benchmarks for manual exploratory / checklist testing.
+const MANUAL_MINUTES = {
+  functional: 5,   // Open page, verify element, check behavior
+  security:   8,   // Inspect headers, check SSL, review cookies manually
+  api:        3,   // Craft request in Postman, verify response
+  ui:         6,   // Visually inspect layout, responsiveness, interactions
+  other:      4,   // General checks (SEO meta, alt tags, etc.)
+};
 
 
 function loadSprintMetrics() {
@@ -37,9 +44,7 @@ function saveSprintMetrics(data) {
   } catch (err) {
     console.warn('[Metrics] Could not save sprint metrics:', err.message);
   }
-}
-
-/**
+}/**
  * Calculate sprint velocity improvement for a pipeline run
  * @param {object} params
  * @param {number} params.totalTests - Total tests executed
@@ -56,11 +61,11 @@ function calculateSprintVelocity({ totalTests, pipelineDurationMs, testBreakdown
   const other = totalTests - functional - security - api - ui;
 
   const manualMinutes =
-    (functional * MANUAL_MINUTES_PER_TEST) +
-    (security * MANUAL_MINUTES_PER_SECURITY_TEST) +
-    (api * MANUAL_MINUTES_PER_API_TEST) +
-    (ui * MANUAL_MINUTES_PER_TEST) +
-    (Math.max(0, other) * MANUAL_MINUTES_PER_TEST);
+    (functional * MANUAL_MINUTES.functional) +
+    (security * MANUAL_MINUTES.security) +
+    (api * MANUAL_MINUTES.api) +
+    (ui * MANUAL_MINUTES.ui) +
+    (Math.max(0, other) * MANUAL_MINUTES.other);
 
   const manualMs = manualMinutes * 60 * 1000;
   const aiMs = pipelineDurationMs || 1;

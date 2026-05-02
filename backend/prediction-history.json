@@ -107,6 +107,132 @@
       "decision": "BLOCKED",
       "outcome": null,
       "correct": null
+    },
+    {
+      "id": "pred-013",
+      "timestamp": "2026-04-23T06:26:20.010Z",
+      "riskScore": 50,
+      "riskLevel": "medium",
+      "decision": "APPROVED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-014",
+      "timestamp": "2026-04-23T06:26:21.847Z",
+      "riskScore": 62,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-015",
+      "timestamp": "2026-04-23T06:32:37.321Z",
+      "riskScore": 62,
+      "riskLevel": "medium",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-016",
+      "timestamp": "2026-04-23T06:32:55.750Z",
+      "riskScore": 62,
+      "riskLevel": "medium",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-017",
+      "timestamp": "2026-04-23T06:36:46.284Z",
+      "riskScore": 62,
+      "riskLevel": "medium",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-018",
+      "timestamp": "2026-04-23T06:37:07.056Z",
+      "riskScore": 62,
+      "riskLevel": "medium",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-019",
+      "timestamp": "2026-04-23T06:40:41.134Z",
+      "riskScore": 65,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-020",
+      "timestamp": "2026-04-23T06:40:42.014Z",
+      "riskScore": 55,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-021",
+      "timestamp": "2026-04-23T06:44:58.953Z",
+      "riskScore": 70,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-022",
+      "timestamp": "2026-04-23T06:45:18.008Z",
+      "riskScore": 75,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-023",
+      "timestamp": "2026-04-23T07:40:03.849Z",
+      "riskScore": 56,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-024",
+      "timestamp": "2026-04-23T07:40:20.105Z",
+      "riskScore": 75,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-025",
+      "timestamp": "2026-04-23T08:23:13.457Z",
+      "riskScore": 65,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
+    },
+    {
+      "id": "pred-026",
+      "timestamp": "2026-04-23T08:23:33.109Z",
+      "riskScore": 72,
+      "riskLevel": "high",
+      "decision": "BLOCKED",
+      "outcome": null,
+      "correct": null
     }
   ]
 }
