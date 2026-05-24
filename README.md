@@ -121,7 +121,7 @@ The GitHub Actions pipeline (`.github/workflows/ci.yml`) includes:
 2. **Backend Tests** — Health check & dependency verification
 3. **Frontend Build** — Next.js production build (`npx next build`)
 4. **Risk Gate** — AI evaluates release risk and blocks if too high (`/api/risk/evaluate`)
-5. **Deploy** — Only runs on main branch after all gates pass
+5. **Deploy** — Only runs on the main branch after all gates pass
 
 ---
 
