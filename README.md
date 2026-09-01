@@ -6,7 +6,7 @@
 ![Tech](https://img.shields.io/badge/stack-Next.js%2016%20%2B%20Express%20%2B%20LangGraph-blue)
 ![Agents](https://img.shields.io/badge/agents-multi--agent%20architecture-purple)
 
----
+-----
 
 ## 🎯 What It Does
 
