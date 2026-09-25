@@ -4,7 +4,6 @@
 
 ![Stack](https://img.shields.io/badge/stack-Next.js%2016%20%2B%20Express%20%2B%20LangGraph-blue)
 ![AI](https://img.shields.io/badge/AI-Groq%20%7C%20OpenRouter%20%7C%20Gemini%20%7C%20OpenAI-purple)
-![Hosting](https://img.shields.io/badge/hosting-Vercel%20%2B%20Render%20(free)-brightgreen)
 
 ---
 
@@ -32,12 +31,12 @@ AI is optional: without an API key everything runs in **rule-based mode**. With 
 ```mermaid
 flowchart LR
     subgraph Browser["👤 User's browser"]
-        UI["Next.js 16 app<br/>(Vercel)"]
+        UI["Next.js 16 app"]
         LS[("localStorage<br/>session id · project ·<br/>test-account login ·<br/>GitHub token")]
         UI <--> LS
     end
 
-    subgraph API["⚙️ Express API (Render · Docker)"]
+    subgraph API["⚙️ Express API (Docker)"]
         MW["Middleware<br/>helmet · CORS · rate limits ·<br/>per-user session"]
         R["Routes<br/>/dashboard-data · /predict-risk ·<br/>/generate-tests · /code-fixes · /ask"]
         G["LangGraph<br/>agent pipeline"]
@@ -145,7 +144,6 @@ Implemented once in [`backend/src/services/riskEngine.js`](backend/src/services/
 | **Orchestration** | LangGraph (`@langchain/langgraph`) |
 | **Test runners** | Selenium WebDriver + Chromium, Postman/Newman, cheerio HTML analysis, built-in TLS/header security scanner |
 | **AI** | Any OpenAI-compatible API — Groq, OpenRouter, Gemini, OpenAI, Ollama, custom |
-| **Hosting** | Vercel (frontend) + Render Docker web service (backend) |
 | **CI/CD** | GitHub Actions: lint → tests → Docker build → frontend build → risk gate → deploy |
 
 ---
@@ -169,35 +167,6 @@ npm run dev
 ```
 
 In development the API accepts requests from any `localhost` port, so it doesn't matter which port Next.js picks.
-
----
-
-## ☁️ Deployment
-
-The backend runs as a Docker service on **Render** (it needs Chromium); the frontend runs on **Vercel**. Both have free tiers.
-
-1. **Push this repo to GitHub.**
-2. **Backend — Render:** *New → Blueprint* → select the repo. [`render.yaml`](render.yaml) builds [`backend/Dockerfile`](backend/Dockerfile). Fill in `GROQ_API_KEY` / `OPENROUTER_API_KEY` / `GEMINI_API_KEY` (any, or none) and leave `FRONTEND_URL` empty for now. Wait for the build (~5 min), then open `https://<service>.onrender.com/api/health`.
-3. **Frontend — Vercel:** *Add New → Project* → same repo, **Root Directory `frontend`**, env var `NEXT_PUBLIC_API_URL=https://<service>.onrender.com/api`. Deploy.
-4. **Connect them:** on Render set `FRONTEND_URL=https://<your-app>.vercel.app` (comma-separate several; no trailing slash).
-5. *(Optional)* In GitHub → *Settings → Secrets and variables → Actions*, add the variable `RISK_GATE_URL` (the site the CI risk gate should test) and the secret `GROQ_API_KEY`.
-
-**Free-tier notes:** Render sleeps after 15 min idle — the first visit takes ~30–60 s and the app shows a "waking up" banner. The 512 MB instance runs one Chrome at a time (`SELENIUM_MAX_CONCURRENCY=1`); other users' browser tests queue.
-
-### Environment variables (backend)
-
-| Variable | Purpose |
-|---|---|
-| `FRONTEND_URL` | Allowed frontend origin(s), comma-separated |
-| `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY` | AI fallback chain, in that order (all optional) |
-| `AI_PROVIDER`, `AI_MODELS`, `AI_BASE_URL`, `AI_API_KEY` | Use one specific provider / custom OpenAI-compatible endpoint |
-| `GITHUB_TOKEN` | Optional — raises the GitHub API limit for repo info (code download needs no token) |
-| `CRAWL_MAX_PAGES` / `CRAWL_MAX_LOGGED_IN_PAGES` | Page caps (default 20 / 15) |
-| `SELENIUM_ENABLED`, `SELENIUM_MAX_CONCURRENCY` | Browser testing on/off, concurrent Chrome instances |
-| `RATE_LIMIT_GENERAL`, `RATE_LIMIT_HEAVY` | Requests per IP (per 15 min) / pipeline runs per IP (per 10 min) |
-| `ALLOW_PRIVATE_URLS` | `true` only for local development (allows testing localhost) |
-
-See [`backend/.env.example`](backend/.env.example) for the full list.
 
 ---
 
