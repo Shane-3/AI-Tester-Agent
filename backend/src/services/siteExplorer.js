@@ -294,6 +294,8 @@ const CHECK_STATE = `
     otp: !!document.querySelector('input[autocomplete="one-time-code"]') || /verification code|two-factor|2fa|authenticator app|one-time (pass)?code/.test(text),
     oauthOnly: /(continue|sign in|log in) with (google|github|microsoft|apple|facebook)/.test(text),
     errorText: err ? err[0].trim() : null,
+    rateLimited: /too many (attempts|requests|login)|try again (later|in a few)|rate limit/.test(text),
+    sessionExpired: /session (has )?(expired|timed out)|please (log|sign) in again/.test(text),
     title: document.title || '',
   };`;
 
@@ -334,6 +336,13 @@ const result = (status, message, extra = {}) => ({ status, message, ...extra });
 function explainFailure(state, loginPath) {
   if (state?.otp) return result('unsupported', 'The site asked for a verification (2FA) code, which can\'t be entered automatically. Use a test account without 2FA.');
   if (state?.captcha) return result('unsupported', 'The login page has a CAPTCHA, which can\'t be solved automatically.');
+  if (state?.rateLimited) return result('failed', 'The site is rate-limiting login attempts ("too many attempts"). Wait 15 minutes and re-run.');
+  if (state?.bounced || state?.sessionExpired) {
+    return result('failed', 'The login was accepted, but the site immediately lost the session and returned to the login page. '
+      + 'This usually means the login cookie comes from an API on a different domain (a third-party cookie). '
+      + 'Safari, Firefox strict mode and incognito windows block these — real users on those browsers can\'t stay logged in either. '
+      + 'Fix: serve the API from the same domain as the site (e.g. a /api rewrite/proxy) so the cookie is first-party.');
+  }
   if (state?.errorText) return result('failed', `The site rejected the login: "${state.errorText.slice(0, 100)}". Check the email and password.`);
   return result('failed', `Login didn't complete — still on ${loginPath}. Check the email and password.`);
 }
@@ -428,7 +437,29 @@ async function performLogin(driver, loginUrl, username, password) {
 
   // Wait for the password field to disappear, an error, or a 2FA prompt
   await sleep(1000);
-  const state = await waitForScript(driver, CHECK_STATE, s => s && s.ready && (!s.pwVisible || s.errorText || s.otp), 15000);
+  const formUrl = await driver.getCurrentUrl().catch(() => loginUrl);
+  // Both signals are brief (a flash of the dashboard, a toast), so remember them
+  let leftLoginPage = false;
+  let sawSessionExpired = false;
+  const state = await waitForScript(driver, CHECK_STATE, (s) => {
+    if (!s) return false;
+    if (!urlMatches(s.url, formUrl)) leftLoginPage = true;
+    if (s.sessionExpired) sawSessionExpired = true;
+    const bouncedBack = leftLoginPage && s.pwVisible && urlMatches(s.url, formUrl);
+    return s.ready && (!s.pwVisible || s.errorText || s.otp || s.rateLimited || s.sessionExpired || bouncedBack);
+  }, 15000);
+  // Went somewhere (e.g. the dashboard) and got sent back to a login form
+  if (state && state.pwVisible && (leftLoginPage || sawSessionExpired)) state.bounced = true;
+  if (state && !state.pwVisible) {
+    // Some apps show the dashboard, then bounce back once an API call fails
+    await sleep(2500);
+    const later = await driver.executeScript(CHECK_STATE).catch(() => null);
+    if (later?.pwVisible && (later.sessionExpired || isLoginUrl(later.url) || urlMatches(later.url, formUrl))) {
+      const failure = explainFailure({ ...later, bounced: true }, loginPath);
+      failure.message += directNote;
+      return failure;
+    }
+  }
   if (!state || state.pwVisible || state.otp) {
     const failure = explainFailure(state, loginPath);
     failure.message += directNote;

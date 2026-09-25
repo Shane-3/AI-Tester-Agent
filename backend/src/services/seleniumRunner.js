@@ -69,6 +69,10 @@ const NAVIGATION_TIMEOUT = 15000;
  */
 async function createDriver({ captureConsole = false } = {}) {
   const options = new Options();
+  // Behave like default desktop Chrome: allow third-party cookies. Some
+  // Chromium builds (e.g. Linux distro packages) block them, which breaks
+  // logins on sites whose API lives on another domain.
+  options.setUserPreferences({ 'profile.cookie_controls_mode': 0, 'profile.block_third_party_cookies': false });
   if (captureConsole) {
     // Collect page JavaScript errors (read back via driver.manage().logs())
     const prefs = new logging.Preferences();
