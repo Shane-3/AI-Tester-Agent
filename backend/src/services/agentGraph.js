@@ -5,20 +5,21 @@
  * using LangGraph's node/edge model with shared state.
  * 
  * Graph flow:
- *   START → crawler → testRunner → securityScanner → riskAnalyzer → gatekeeper → metricsCollector → END
+ *   START → crawler → testRunner → securityScanner → pageExplorer → riskAnalyzer → gatekeeper → metricsCollector → END
  */
 
 const { StateGraph, END, START } = require('@langchain/langgraph');
-const { RunnableConfig } = require('@langchain/core/runnables');
 
 // Import agent services
 const { crawlWebsite } = require('./websiteCrawler');
-const { runTests, summarizeResults, cacheTestResults } = require('./testRunner');
-const { analyzeRisk, analyzeSitePurpose } = require('./geminiAgent');
+const { runTests, summarizeResults, cacheTestResults, getCachedTestResults } = require('./testRunner');
+const { analyzeRisk, analyzeSitePurpose } = require('./aiAgent');
 const { runSeleniumTests } = require('./seleniumRunner');
 const { runNewmanTests } = require('./newmanRunner');
 const { runSecurityScan } = require('./securityScanner');
 const { calculateSprintVelocity, recordPrediction } = require('./metricsEngine');
+const { exploreSite } = require('./siteExplorer');
+const { setProgress, getSession } = require('./sessionStore');
 
 
 /**
@@ -40,6 +41,7 @@ function createInitialState(url, options = {}) {
     seleniumResults: [],
     newmanResults: [],
     zapResults: [],
+    siteExploration: null,
     allTestResults: [],
     testSummary: null,
 
@@ -67,6 +69,7 @@ function createInitialState(url, options = {}) {
  */
 async function crawlerAgent(state) {
   const startMs = Date.now();
+  setProgress('Crawling the start page…');
   try {
     const siteAnalysis = await crawlWebsite(state.url);
     const sitePurpose = await analyzeSitePurpose(siteAnalysis);
@@ -111,6 +114,7 @@ async function crawlerAgent(state) {
  */
 async function testRunnerAgent(state) {
   const startMs = Date.now();
+  setProgress('Running tests (browser, API, SEO, accessibility)…');
   if (!state.siteAnalysis?.success) {
     return {
       ...state,
@@ -181,6 +185,7 @@ async function testRunnerAgent(state) {
  */
 async function securityScannerAgent(state) {
   const startMs = Date.now();
+  setProgress('Running security checks…');
   try {
     const secResults = await runSecurityScan(state.url, state.siteAnalysis);
     const durationMs = Date.now() - startMs;
@@ -221,11 +226,59 @@ async function securityScannerAgent(state) {
 }
 
 /**
+ * Node 3b: Page Explorer Agent
+ * Crawls more pages of the site and, with a test account, pages behind the login
+ */
+async function pageExplorerAgent(state) {
+  const startMs = Date.now();
+  const timelineEntry = (status, summary) => ({
+    id: 'agent-explorer', agent: 'Page Explorer Agent', status,
+    startedAt: new Date(startMs).toISOString(),
+    completedAt: new Date().toISOString(),
+    durationMs: Date.now() - startMs, duration: formatDuration(Date.now() - startMs),
+    summary,
+  });
+
+  if (!state.siteAnalysis?.success) {
+    return { ...state, agentTimeline: [...state.agentTimeline, timelineEntry('skipped', 'Skipped — the start page could not be loaded')] };
+  }
+
+  try {
+    const exploration = await exploreSite(state.siteAnalysis, state.options?.auth || null);
+    const allResults = [...state.allTestResults, ...exploration.tests];
+    const summary = summarizeResults(allResults);
+    cacheTestResults(state.url, state.siteAnalysis, allResults, summary);
+
+    const { counts, login } = exploration;
+    const loginNote = {
+      success: ` + ${counts.private} logged-in`,
+      'not-provided': ' — login page found, no test account given',
+    }[login.status] || (login.status === 'none' ? '' : ` — login: ${login.status}`);
+
+    return {
+      ...state,
+      siteExploration: exploration,
+      allTestResults: allResults,
+      testSummary: summary,
+      agentTimeline: [...state.agentTimeline, timelineEntry('completed',
+        `Explored ${counts.public} public page(s)${loginNote}; ${exploration.tests.filter(t => !t.passed).length} site-wide issue(s)`)],
+    };
+  } catch (err) {
+    return {
+      ...state,
+      errors: [...state.errors, { agent: 'explorer', error: err.message }],
+      agentTimeline: [...state.agentTimeline, timelineEntry('failed', `Error: ${err.message}`)],
+    };
+  }
+}
+
+/**
  * Node 4: Risk Analyzer Agent
- * AI-powered risk analysis using Gemini
+ * AI-powered risk analysis
  */
 async function riskAnalyzerAgent(state) {
   const startMs = Date.now();
+  setProgress('Analyzing release risk…');
   try {
     const riskAnalysis = await analyzeRisk(
       state.siteAnalysis,
@@ -233,6 +286,8 @@ async function riskAnalyzerAgent(state) {
       state.testSummary
     );
     const durationMs = Date.now() - startMs;
+    // Insights reuses this exact analysis (same score, decision and summary)
+    getSession().lastRiskAnalysis = { cachedAt: getCachedTestResults()?.cachedAt, analysis: riskAnalysis };
 
     return {
       ...state,
@@ -242,7 +297,7 @@ async function riskAnalyzerAgent(state) {
         startedAt: new Date(startMs).toISOString(),
         completedAt: new Date(startMs + durationMs).toISOString(),
         durationMs, duration: formatDuration(durationMs),
-        summary: `Risk Score: ${riskAnalysis.riskScore}/100 (${riskAnalysis.riskLevel?.toUpperCase()}) — ${riskAnalysis.source === 'gemini' ? 'AI-powered' : 'Rule-based'} analysis`,
+        summary: `Risk ${riskAnalysis.riskScore}/100 (${riskAnalysis.riskLevel?.toUpperCase()}) — ${riskAnalysis.deployment === 'blocked' ? `blocked: ${riskAnalysis.reasons[0]}` : 'no release blockers'}`,
       }],
     };
   } catch (err) {
@@ -283,7 +338,7 @@ async function gatekeeperAgent(state) {
       startedAt: new Date(startMs).toISOString(),
       completedAt: new Date(startMs + durationMs).toISOString(),
       durationMs, duration: formatDuration(durationMs),
-      summary: `Decision: ${deployment.toUpperCase()} — ${deployment === 'approved' ? 'Release can proceed' : 'Release blocked due to risk'}`,
+      summary: `Decision: ${deployment.toUpperCase()} — ${deployment === 'approved' ? 'Release can proceed' : (state.riskAnalysis?.reasons || []).join('; ') || 'Release blocked due to risk'}`,
     }],
   };
 }
@@ -362,6 +417,7 @@ function buildAgentGraph() {
     seleniumResults: { value: (a, b) => b ?? a, default: () => [] },
     newmanResults: { value: (a, b) => b ?? a, default: () => [] },
     zapResults: { value: (a, b) => b ?? a, default: () => [] },
+    siteExploration: { value: (a, b) => b ?? a, default: () => null },
     allTestResults: { value: (a, b) => b ?? a, default: () => [] },
     testSummary: { value: (a, b) => b ?? a, default: () => null },
     riskAnalysis: { value: (a, b) => b ?? a, default: () => null },
@@ -379,6 +435,7 @@ function buildAgentGraph() {
   graph.addNode('crawler', crawlerAgent);
   graph.addNode('testRunner', testRunnerAgent);
   graph.addNode('securityScanner', securityScannerAgent);
+  graph.addNode('pageExplorer', pageExplorerAgent);
   graph.addNode('riskAnalyzer', riskAnalyzerAgent);
   graph.addNode('gatekeeper', gatekeeperAgent);
   graph.addNode('metricsCollector', metricsCollectorAgent);
@@ -387,7 +444,8 @@ function buildAgentGraph() {
   graph.addEdge(START, 'crawler');
   graph.addEdge('crawler', 'testRunner');
   graph.addEdge('testRunner', 'securityScanner');
-  graph.addEdge('securityScanner', 'riskAnalyzer');
+  graph.addEdge('securityScanner', 'pageExplorer');
+  graph.addEdge('pageExplorer', 'riskAnalyzer');
   graph.addEdge('riskAnalyzer', 'gatekeeper');
   graph.addEdge('gatekeeper', 'metricsCollector');
   graph.addEdge('metricsCollector', END);
@@ -401,7 +459,7 @@ let compiledGraph = null;
 function getGraph() {
   if (!compiledGraph) {
     compiledGraph = buildAgentGraph();
-    console.log('[LangGraph] Agent pipeline compiled — 6 nodes, 7 edges');
+    console.log('[LangGraph] Agent pipeline compiled — 7 nodes, 8 edges');
   }
   return compiledGraph;
 }
@@ -420,7 +478,12 @@ async function runAgentPipeline(url, options = {}) {
   console.log(`[LangGraph] ═══ Pipeline starting for ${url} ═══`);
   const startMs = Date.now();
 
-  const finalState = await graph.invoke(initialState);
+  let finalState;
+  try {
+    finalState = await graph.invoke(initialState);
+  } finally {
+    setProgress(null);
+  }
 
   const totalMs = Date.now() - startMs;
   console.log(`[LangGraph] ═══ Pipeline complete in ${formatDuration(totalMs)} — ${finalState.agentTimeline.length} agents executed ═══`);
@@ -439,4 +502,4 @@ function formatDuration(ms) {
   return `${minutes}m ${remainSec}s`;
 }
 
-module.exports = { runAgentPipeline, getGraph, buildAgentGraph };
+module.exports = { runAgentPipeline };

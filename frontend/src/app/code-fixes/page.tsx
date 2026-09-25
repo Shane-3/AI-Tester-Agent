@@ -24,6 +24,7 @@ export default function CodeFixesPage() {
     runCodeAnalysis,
     projectConfig,
     loadProjectInfo,
+    aiInfo,
   } = useAppStore();
 
   const [expandedFix, setExpandedFix] = useState<number | null>(null);
@@ -58,7 +59,7 @@ export default function CodeFixesPage() {
           <div style={{ marginBottom: 20 }}>
             <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 2 }}>Code Intelligence</h1>
             <p style={{ color: "var(--text-muted)", fontSize: 12 }}>
-              Line-level fix suggestions powered by Gemini
+              Line-level fix suggestions powered by AI
             </p>
           </div>
           <div className="glass-card" style={{ padding: 40, textAlign: "center" }}>
@@ -112,6 +113,14 @@ export default function CodeFixesPage() {
               Fetching files from GitHub, correlating with test failures, and generating precise fixes...
             </div>
           </div>
+        ) : codeFixes?.error ? (
+          <div className="glass-card" style={{ padding: 40, textAlign: "center" }}>
+            <ShieldAlert size={24} color="var(--accent-red)" style={{ margin: "0 auto 12px" }} />
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Code Analysis Failed</div>
+            <p style={{ fontSize: 12, color: "var(--text-secondary)", maxWidth: 520, margin: "0 auto" }}>
+              {codeFixes.message || "Something went wrong while analyzing the repository."}
+            </p>
+          </div>
         ) : fixes.length === 0 ? (
           <div className="glass-card" style={{ padding: 40, textAlign: "center" }}>
             <FileCode size={24} color="var(--text-muted)" style={{ margin: "0 auto 12px" }} />
@@ -137,7 +146,7 @@ export default function CodeFixesPage() {
               <div className="stat-card">
                 <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>AI Engine</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 16, fontWeight: 700, color: "var(--accent-violet)" }}>
-                  <Code2 size={16} /> {codeFixes.source === "gemini" ? "Gemini Pro" : "Rule-based Fallback"}
+                  <Code2 size={16} /> {codeFixes.source === "ai" ? (aiInfo?.label || "AI") : "Rule-based Fallback"}
                 </div>
                 <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4 }}>Analysis took {meta.pipelineDurationMs ? `${(meta.pipelineDurationMs / 1000).toFixed(1)}s` : "--"}</div>
               </div>

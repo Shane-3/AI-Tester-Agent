@@ -78,7 +78,7 @@ export default function AskPage() {
         <div style={{ marginBottom: 20, flexShrink: 0 }}>
           <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 2 }}>Ask AI</h1>
           <p style={{ color: "var(--text-muted)", fontSize: 12 }}>
-            Chat with Gemini about the <strong style={{ color: "var(--text-secondary)" }}>{projectName}</strong> codebase
+            Chat with AI about the <strong style={{ color: "var(--text-secondary)" }}>{projectName}</strong> codebase
           </p>
         </div>
 

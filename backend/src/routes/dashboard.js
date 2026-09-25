@@ -5,8 +5,8 @@
  * Runs the LangGraph agent pipeline:
  * 1. Crawler Agent → crawl website
  * 2. Test Execution Agent → base + Selenium + Newman tests
- * 3. Security Scanner Agent → OWASP ZAP (if available)
- * 4. Risk Analysis Agent → Gemini/rule-based risk scoring
+ * 3. Security Scanner Agent → built-in HTTP/TLS security checks
+ * 4. Risk Analysis Agent → AI/rule-based risk scoring
  * 5. Gatekeeper Agent → APPROVE/BLOCK decision
  * 6. Metrics Agent → sprint velocity + risk accuracy
  */
@@ -14,8 +14,8 @@
 const express = require('express');
 const router = express.Router();
 const { runAgentPipeline } = require('../services/agentGraph');
-const { getProjectContext, getCachedGitHubData } = require('../services/aiSimulator');
-const { summarizeResults } = require('../services/testRunner');
+const { getProjectContext, getCachedGitHubData } = require('../services/projectContext');
+const { getSession, getRequestSiteAuth } = require('../services/sessionStore');
 
 function formatDuration(ms) {
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -27,31 +27,32 @@ function formatDuration(ms) {
   return `${minutes}m ${remainSec}s`;
 }
 
-let dashboardCache = null;
-let previousDashboardCache = null;
-let dashboardCacheTime = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+// Dashboard caches live on the user's session
 function invalidateDashboardCache() {
-  dashboardCache = null;
-  previousDashboardCache = null;
-  dashboardCacheTime = 0;
+  const S = getSession();
+  S.dashboardCache = null;
+  S.previousDashboardCache = null;
+  S.dashboardCacheTime = 0;
 }
 
 router.get('/dashboard-data', async (req, res) => {
   try {
+    const S = getSession();
     const forceRefresh = req.query.refresh === 'true';
     const now = Date.now();
 
     // Return cached response if still fresh and no force refresh
-    if (!forceRefresh && dashboardCache && (now - dashboardCacheTime) < CACHE_TTL_MS) {
-      console.log('[Dashboard] Returning cached response (age: ' + Math.round((now - dashboardCacheTime) / 1000) + 's)');
-      return res.json(dashboardCache);
+    if (!forceRefresh && S.dashboardCache && (now - S.dashboardCacheTime) < CACHE_TTL_MS) {
+      console.log('[Dashboard] Returning cached response (age: ' + Math.round((now - S.dashboardCacheTime) / 1000) + 's)');
+      return res.json(S.dashboardCache);
     }
 
-    if (forceRefresh && dashboardCache) {
+    if (forceRefresh && S.dashboardCache) {
       console.log('[Dashboard] Force refresh requested. Storing previous run for delta comparison.');
-      previousDashboardCache = dashboardCache;
+      S.previousDashboardCache = S.dashboardCache;
+      S.previousOutcomes = S.dashboardOutcomes;
     }
 
     const ctx = getProjectContext();
@@ -93,7 +94,7 @@ router.get('/dashboard-data', async (req, res) => {
 
     // ═══ Run LangGraph Agent Pipeline ═══
     const pipelineStart = Date.now();
-    const finalState = await runAgentPipeline(websiteUrl);
+    const finalState = await runAgentPipeline(websiteUrl, { auth: getRequestSiteAuth() });
     const totalPipelineMs = Date.now() - pipelineStart;
 
     const siteAnalysis = finalState.siteAnalysis || {};
@@ -148,12 +149,14 @@ router.get('/dashboard-data', async (req, res) => {
         deployment,
         explanation: riskAnalysis.summary || '',
         recommendations: riskAnalysis.recommendations || [],
-        factors: riskAnalysis.topIssues?.map((issue, i) => ({
-          name: `Issue ${i + 1}`,
-          description: issue,
-          score: Math.round((riskAnalysis.riskScore || 0) / (riskAnalysis.topIssues.length || 1)),
-          weight: 0.33,
-        })) || [],
+        reasons: riskAnalysis.reasons || [],
+        formula: riskAnalysis.formula || '',
+        factors: (riskAnalysis.categories || []).filter(c => c.measured).map(c => ({
+          name: c.name,
+          description: c.failed ? `${c.failed}/${c.checks} failing: ${c.failures.slice(0, 2).map(f => f.title).join('; ')}` : `All ${c.checks} checks pass`,
+          score: c.risk,
+          weight: c.weight / 100,
+        })),
       },
       testMetrics: {
         totalGenerated: summary.total,
@@ -170,6 +173,11 @@ router.get('/dashboard-data', async (req, res) => {
       predictionId: finalState.predictionId || null,
       pipelineDuration: formatDuration(totalPipelineMs),
       pipelineDurationMs: totalPipelineMs,
+      exploration: finalState.siteExploration ? {
+        login: finalState.siteExploration.login,
+        counts: finalState.siteExploration.counts,
+        pages: finalState.siteExploration.pages.map(({ checks, ...page }) => page),
+      } : null,
       siteAnalysis: {
         title: siteAnalysis.title,
         siteType: siteAnalysis.siteType,
@@ -183,25 +191,31 @@ router.get('/dashboard-data', async (req, res) => {
     };
 
     // Calculate delta if we have a previous run
-    if (previousDashboardCache) {
-      const prevScore = previousDashboardCache.riskOverview?.score || 0;
+    if (S.previousDashboardCache) {
+      const prevScore = S.previousDashboardCache.riskOverview?.score || 0;
       const currScore = responseData.riskOverview.score;
-      const prevPassed = previousDashboardCache.testMetrics?.byStatus?.passed || 0;
+      const prevPassed = S.previousDashboardCache.testMetrics?.byStatus?.passed || 0;
       const currPassed = responseData.testMetrics.byStatus.passed;
-      const prevFailed = previousDashboardCache.testMetrics?.byStatus?.failed || 0;
+      const prevFailed = S.previousDashboardCache.testMetrics?.byStatus?.failed || 0;
       const currFailed = responseData.testMetrics.byStatus.failed;
 
-      const prevFails = previousDashboardCache.recentTests?.filter(t => !t.passed) || [];
-      const currPasses = responseData.recentTests.filter(t => t.passed);
-      const improvedTests = currPasses.filter(cp => prevFails.some(pf => pf.title === cp.title)).map(t => t.title);
-
-      const prevPasses = previousDashboardCache.recentTests?.filter(t => t.passed) || [];
-      const currFails = responseData.recentTests.filter(t => !t.passed);
-      const regressionTests = currFails.filter(cf => prevPasses.some(pp => pp.title === cf.title)).map(t => t.title);
+      // Compare every test by title (page counts like "(4 pages)" ignored)
+      const prevOutcomes = S.previousOutcomes || {};
+      const improvedTests = [];
+      const regressionTests = [];
+      for (const t of allTests) {
+        const before = prevOutcomes[testKey(t.title)];
+        if (before === false && t.passed) improvedTests.push(t.title);
+        if (before === true && !t.passed) regressionTests.push(t.title);
+      }
+      const riskScoreChange = currScore - prevScore;
 
       responseData.delta = {
         hasDelta: true,
-        riskScoreChange: currScore - prevScore,
+        riskScoreChange,
+        direction: riskScoreChange < 0 ? 'improved' : riskScoreChange > 0 ? 'worse' : 'unchanged',
+        previousDeployment: S.previousDashboardCache.riskOverview?.deployment,
+        currentDeployment: responseData.riskOverview.deployment,
         passedChange: currPassed - prevPassed,
         failedChange: currFailed - prevFailed,
         previousScore: prevScore,
@@ -214,8 +228,9 @@ router.get('/dashboard-data', async (req, res) => {
     }
 
     // Cache the response
-    dashboardCache = responseData;
-    dashboardCacheTime = Date.now();
+    S.dashboardCache = responseData;
+    S.dashboardOutcomes = Object.fromEntries(allTests.map(t => [testKey(t.title), !!t.passed]));
+    S.dashboardCacheTime = Date.now();
     console.log('[Dashboard] LangGraph pipeline complete — response cached for ' + (CACHE_TTL_MS / 1000) + 's');
 
     res.json(responseData);
@@ -224,6 +239,15 @@ router.get('/dashboard-data', async (req, res) => {
     res.status(500).json({ error: 'Failed to load dashboard data', message: error.message });
   }
 });
+
+// What the current pipeline run is doing (polled by the UI while it waits)
+router.get('/progress', (req, res) => {
+  res.json({ progress: getSession().progress || null });
+});
+
+function testKey(title = '') {
+  return title.replace(/\s*\(\d+ pages?\)\s*$/, '').trim();
+}
 
 module.exports = router;
 module.exports.invalidateDashboardCache = invalidateDashboardCache;

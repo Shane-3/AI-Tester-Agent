@@ -10,6 +10,7 @@ import {
   Code2,
   MessageSquare,
 } from "lucide-react";
+import { useAppStore } from "@/lib/store";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -22,6 +23,7 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const aiInfo = useAppStore((s) => s.aiInfo);
 
   return (
     <aside className="sidebar">
@@ -49,6 +51,18 @@ export default function Sidebar() {
           );
         })}
       </nav>
+
+      {aiInfo && (
+        <div
+          title={aiInfo.models?.length ? `Models: ${aiInfo.models.join(", ")}` : "No AI provider configured on the server"}
+          style={{ padding: "10px 16px", borderTop: "1px solid var(--border-color)", fontSize: 11, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 6 }}
+        >
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: aiInfo.mode === "live" ? "var(--accent-green)" : "var(--accent-amber)" }} />
+          {aiInfo.mode === "live"
+            ? `AI: ${aiInfo.label}${aiInfo.fallbacks?.length ? ` (+${aiInfo.fallbacks.length} fallback${aiInfo.fallbacks.length > 1 ? "s" : ""})` : ""}`
+            : "Rule-based mode"}
+        </div>
+      )}
     </aside>
   );
 }

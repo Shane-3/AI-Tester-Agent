@@ -159,14 +159,7 @@ body {
   border-color: var(--accent-green);
 }
 
-/* ─── Animations (minimal, no stagger) ──────────────────────────────────────── */
-.animate-fade-in-up { /* stripped — no animation */ }
-.animate-slide-in-left { }
-.animate-pulse-glow { }
-.animate-count-up { }
-.stagger-children > * { }
-
-/* keep spin for loaders only */
+/* ─── Animations (loader spin only) ─────────────────────────────────────────── */
 @keyframes spin { to { transform: rotate(360deg); } }
 .animate-spin { animation: spin 1s linear infinite; }
 

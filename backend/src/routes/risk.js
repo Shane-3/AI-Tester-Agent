@@ -2,46 +2,25 @@
  * Risk Prediction Routes — REAL EXECUTION (Dynamic)
  * 
  * POST /api/predict-risk
- * Uses real test results and crawl data for risk analysis.
- * Produces dynamic, detailed risk factors with varying scores,
- * weights, trend data, and contextualized recommendations.
+ * Detailed view of the same risk analysis the Dashboard shows (the score and
+ * decision come from services/riskEngine.js), plus trend and recommendations.
  */
 
 const express = require('express');
 const router = express.Router();
 const { crawlWebsite } = require('../services/websiteCrawler');
 const { runTests, summarizeResults, getCachedTestResults } = require('../services/testRunner');
-const { analyzeRisk } = require('../services/geminiAgent');
-const { getProjectContext } = require('../services/aiSimulator');
+const { analyzeRisk } = require('../services/aiAgent');
+const { getProjectContext } = require('../services/projectContext');
 
-const fs = require('fs');
-const pathModule = require('path');
-const HISTORY_FILE = pathModule.join(__dirname, '..', '..', 'risk-history.json');
+const { getSession } = require('../services/sessionStore');
 
-function loadRiskHistory() {
-  try {
-    if (fs.existsSync(HISTORY_FILE)) {
-      const data = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf-8'));
-      // Support both old flat array format and new per-URL map format
-      if (Array.isArray(data)) return {}; // discard old format
-      return typeof data === 'object' ? data : {};
-    }
-  } catch (err) {
-    console.warn('[Risk] Could not load history:', err.message);
-  }
-  return {};
+// Per-user risk history map: { url: [ {timestamp, score, level}, ... ] }
+function getRiskHistoryMap() {
+  const S = getSession();
+  if (!S.riskHistory) S.riskHistory = {};
+  return S.riskHistory;
 }
-
-function saveRiskHistory(history) {
-  try {
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2));
-  } catch (err) {
-    console.warn('[Risk] Could not save history:', err.message);
-  }
-}
-
-// History is now a map: { url: [ {timestamp, score, level}, ... ] }
-let riskHistoryMap = loadRiskHistory();
 
 /**
  * Build risk trend data from REAL history for a specific URL only.
@@ -49,6 +28,7 @@ let riskHistoryMap = loadRiskHistory();
 function buildRiskTrend(currentScore, currentLevel, url) {
   const now = new Date();
   const key = url || 'default';
+  const riskHistoryMap = getRiskHistoryMap();
 
   // Get or create history for this URL
   if (!riskHistoryMap[key]) riskHistoryMap[key] = [];
@@ -64,9 +44,6 @@ function buildRiskTrend(currentScore, currentLevel, url) {
   // Keep last 20 runs max per URL
   if (urlHistory.length > 20) urlHistory = urlHistory.slice(-20);
   riskHistoryMap[key] = urlHistory;
-
-  // Persist to disk
-  saveRiskHistory(riskHistoryMap);
 
   // Build trend entries from this URL's data only
   const entries = urlHistory.map((entry, index) => {
@@ -105,398 +82,126 @@ function buildRiskTrend(currentScore, currentLevel, url) {
     totalRuns: urlHistory.length,
   };
 }
-function buildDetailedFactors(testResults, siteAnalysis, summary) {
-  const failedTests = testResults.filter(t => !t.passed);
-  const passedTests = testResults.filter(t => t.passed);
 
-  // Categorise failed tests
-  const securityFails = failedTests.filter(t =>
-    /security|header|https|ssl|csp|hsts|xss|csrf|cookie|x-powered|permission/i.test(t.title)
-  );
-  const seoFails = failedTests.filter(t =>
-    /seo|meta|title|description|open.?graph|twitter|sitemap|canonical|robots|structured|json-ld|favicon/i.test(t.title)
-  );
-  const accessibilityFails = failedTests.filter(t =>
-    /accessibility|alt.?tag|aria|wcag|landmark|skip|label|heading|h1|tab.?index|lang/i.test(t.title)
-  );
-  const performanceFails = failedTests.filter(t =>
-    /performance|speed|size|compress|resource|ttfb|response.?time|inline|third.?party|noscript/i.test(t.title)
-  );
+const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
 
-  // Anything not categorized goes to "Code Quality"
-  const categorizedIds = new Set([
-    ...securityFails, ...seoFails, ...accessibilityFails, ...performanceFails,
-  ].map(t => t.title));
-  const codeQualityFails = failedTests.filter(t => !categorizedIds.has(t.title));
-
-  // Compute individual scores (0-100) per category
-  function categoryScore(fails, totalInCategory) {
-    if (totalInCategory === 0) return 0;
-    return Math.min(100, Math.round((fails.length / Math.max(totalInCategory, 1)) * 100));
-  }
-
-  // Estimate total tests per category (passed + failed)
-  const securityTotal = securityFails.length + passedTests.filter(t =>
-    /security|header|https|ssl|csp|hsts|xss|csrf|cookie|x-powered|permission/i.test(t.title)
-  ).length || 1;
-  const seoTotal = seoFails.length + passedTests.filter(t =>
-    /seo|meta|title|description|open.?graph|twitter|sitemap|canonical|robots|structured|json-ld|favicon/i.test(t.title)
-  ).length || 1;
-  const a11yTotal = accessibilityFails.length + passedTests.filter(t =>
-    /accessibility|alt.?tag|aria|wcag|landmark|skip|label|heading|h1|tab.?index|lang/i.test(t.title)
-  ).length || 1;
-  const perfTotal = performanceFails.length + passedTests.filter(t =>
-    /performance|speed|size|compress|resource|ttfb|response.?time|inline|third.?party|noscript/i.test(t.title)
-  ).length || 1;
-  const codeTotal = codeQualityFails.length + passedTests.filter(t => {
-    const title = t.title || '';
-    return !/security|header|https|ssl|csp|hsts|xss|csrf|cookie|x-powered|permission|seo|meta|title|description|open.?graph|twitter|sitemap|canonical|robots|structured|json-ld|favicon|accessibility|alt.?tag|aria|wcag|landmark|skip|label|heading|h1|tab.?index|lang|performance|speed|size|compress|resource|ttfb|response.?time|inline|third.?party|noscript/i.test(title);
-  }).length || 1;
-
-  const secScore = categoryScore(securityFails, securityTotal);
-  const seoScore = categoryScore(seoFails, seoTotal);
-  const a11yScore = categoryScore(accessibilityFails, a11yTotal);
-  const perfScore = categoryScore(performanceFails, perfTotal);
-  const codeScore = categoryScore(codeQualityFails, codeTotal);
-
-  // Security headers score from site analysis
-  const secHeaderCount = Object.values(siteAnalysis.securityHeaders || {}).filter(v => !!v).length;
-  const secHeaderScore = Math.round(((6 - secHeaderCount) / 6) * 100);
-  const adjustedSecScore = Math.round((secScore * 0.5) + (secHeaderScore * 0.5));
-
-  // Build factors array — only include categories that have tests
-  const factors = [];
-
-  if (securityTotal > 0) {
-    const descriptions = [];
-    if (securityFails.length > 0) {
-      descriptions.push(`${securityFails.length} of ${securityTotal} security tests failed`);
-    }
-    descriptions.push(`${secHeaderCount}/6 security headers present`);
-    if (securityFails.length > 0) {
-      descriptions.push(`Issues: ${securityFails.slice(0, 2).map(t => t.title.replace(/^.*?:\s*/, '')).join('; ')}`);
-    }
-    factors.push({
-      name: 'Security Posture',
-      score: adjustedSecScore,
-      weight: 0, // will be computed below
-      description: descriptions.join('. '),
-      failCount: securityFails.length,
-      totalTests: securityTotal,
-      severity: adjustedSecScore >= 70 ? 'critical' : adjustedSecScore >= 40 ? 'high' : 'moderate',
-      issues: securityFails.map(t => t.title),
-    });
-  }
-
-  if (seoTotal > 0) {
-    factors.push({
-      name: 'SEO Compliance',
-      score: seoScore,
-      weight: 0,
-      description: `${seoFails.length} of ${seoTotal} SEO checks failed. ${seoFails.length > 0 ? `Missing: ${seoFails.slice(0, 3).map(t => t.title.replace(/^.*?:\s*/, '')).join(', ')}` : 'All SEO requirements met'}`,
-      failCount: seoFails.length,
-      totalTests: seoTotal,
-      severity: seoScore >= 70 ? 'high' : seoScore >= 40 ? 'medium' : 'low',
-      issues: seoFails.map(t => t.title),
-    });
-  }
-
-  if (a11yTotal > 0) {
-    const imgInfo = siteAnalysis.images || {};
-    const altInfo = imgInfo.total > 0 ? ` (${imgInfo.withoutAlt}/${imgInfo.total} images missing alt text)` : '';
-    factors.push({
-      name: 'Accessibility (WCAG)',
-      score: a11yScore,
-      weight: 0,
-      description: `${accessibilityFails.length} of ${a11yTotal} accessibility checks failed${altInfo}. ${accessibilityFails.length > 0 ? `Violations: ${accessibilityFails.slice(0, 2).map(t => t.title.replace(/^.*?:\s*/, '')).join('; ')}` : 'Meets basic WCAG requirements'}`,
-      failCount: accessibilityFails.length,
-      totalTests: a11yTotal,
-      severity: a11yScore >= 60 ? 'high' : a11yScore >= 30 ? 'medium' : 'low',
-      issues: accessibilityFails.map(t => t.title),
-    });
-  }
-
-  if (perfTotal > 0) {
-    factors.push({
-      name: 'Performance & Optimization',
-      score: perfScore,
-      weight: 0,
-      description: `${performanceFails.length} of ${perfTotal} performance checks failed. ${performanceFails.length > 0 ? `Concerns: ${performanceFails.slice(0, 2).map(t => t.title.replace(/^.*?:\s*/, '')).join('; ')}` : 'Performance within acceptable limits'}`,
-      failCount: performanceFails.length,
-      totalTests: perfTotal,
-      severity: perfScore >= 60 ? 'high' : perfScore >= 30 ? 'medium' : 'low',
-      issues: performanceFails.map(t => t.title),
-    });
-  }
-
-  if (codeTotal > 0 && codeQualityFails.length > 0) {
-    factors.push({
-      name: 'Code Quality & Standards',
-      score: codeScore,
-      weight: 0,
-      description: `${codeQualityFails.length} of ${codeTotal} code quality checks failed. ${codeQualityFails.slice(0, 2).map(t => t.title.replace(/^.*?:\s*/, '')).join('; ')}`,
-      failCount: codeQualityFails.length,
-      totalTests: codeTotal,
-      severity: codeScore >= 60 ? 'high' : codeScore >= 30 ? 'medium' : 'low',
-      issues: codeQualityFails.map(t => t.title),
-    });
-  }
-
-  // Overall pass rate factor
-  factors.push({
-    name: 'Overall Test Pass Rate',
-    score: Math.round(100 - summary.passRate),
-    weight: 0,
-    description: `${summary.passed} of ${summary.total} tests passed (${summary.passRate}%). ${summary.criticalFails > 0 ? `${summary.criticalFails} critical failures detected.` : ''} ${summary.highFails > 0 ? `${summary.highFails} high-priority failures.` : ''} ${summary.passRate >= 90 ? 'Excellent coverage.' : summary.passRate >= 70 ? 'Acceptable but improvement recommended.' : 'Below acceptable threshold — needs attention.'}`,
-    failCount: summary.failed,
-    totalTests: summary.total,
-    severity: summary.passRate < 50 ? 'critical' : summary.passRate < 70 ? 'high' : summary.passRate < 85 ? 'medium' : 'low',
-    issues: [],
-  });
-
-  // Compute dynamic weights based on failure severity distribution
-  const totalFailWeight = factors.reduce((sum, f) => sum + f.failCount, 0) || 1;
-  let remainingWeight = 1.0;
-
-  factors.forEach((f, i) => {
-    if (i === factors.length - 1) {
-      // Last factor gets remaining weight to ensure sum = 1.0
-      f.weight = Math.round(remainingWeight * 100) / 100;
-    } else {
-      // Weight proportional to failure count but with a minimum
-      const rawWeight = Math.max(0.08, f.failCount / totalFailWeight);
-      f.weight = Math.round(rawWeight * 100) / 100;
-      remainingWeight -= f.weight;
-    }
-  });
-
-  // Normalize weights to sum to 1.0
-  const totalWeight = factors.reduce((sum, f) => sum + f.weight, 0);
-  if (totalWeight > 0) {
-    factors.forEach(f => {
-      f.weight = Math.round((f.weight / totalWeight) * 100) / 100;
-    });
-  }
-
-  return factors;
+function severityFor(category, blockerTitles) {
+  if (!category.failed) return 'low';
+  if (category.failures.some(f => blockerTitles.has(f.title))) return 'critical'; // holds a release blocker
+  if (category.risk >= 60) return 'critical';
+  if (category.risk >= 40) return 'high';
+  if (category.risk >= 20) return 'medium';
+  return 'low';
 }
 
-/**
- * Generate contextual recommendations based on actual failures.
- * Returns varying counts (3-8) depending on actual issues found.
- */
-function buildRecommendations(factors, siteAnalysis, summary) {
-  const recommendations = [];
-  const priorityOrder = ['critical', 'high', 'medium', 'low'];
-
-  // Sort factors by severity
-  const sorted = [...factors].sort((a, b) =>
-    priorityOrder.indexOf(a.severity) - priorityOrder.indexOf(b.severity)
-  );
-
-  sorted.forEach(factor => {
-    if (factor.failCount === 0) return;
-
-    switch (factor.name) {
-      case 'Security Posture': {
-        const secHeaderCount = Object.values(siteAnalysis.securityHeaders || {}).filter(v => !!v).length;
-        if (secHeaderCount < 4) {
-          recommendations.push({
-            text: `Add missing security headers (${6 - secHeaderCount} of 6 missing) — implement CSP, HSTS, X-Frame-Options, and others`,
-            priority: 'critical',
-            category: 'Security',
-            effort: 'low',
-          });
-        }
-        if (factor.issues.some(i => /https|ssl/i.test(i))) {
-          recommendations.push({ text: 'Enable HTTPS with a valid TLS certificate and redirect all HTTP traffic', priority: 'critical', category: 'Security', effort: 'medium' });
-        }
-        if (factor.issues.some(i => /cookie/i.test(i))) {
-          recommendations.push({ text: 'Set HttpOnly, Secure, and SameSite flags on all cookies', priority: 'high', category: 'Security', effort: 'low' });
-        }
-        break;
-      }
-      case 'SEO Compliance': {
-        if (factor.issues.some(i => /meta.?desc/i.test(i))) {
-          recommendations.push({ text: 'Add a descriptive <meta name="description"> tag (under 160 characters)', priority: 'high', category: 'SEO', effort: 'low' });
-        }
-        if (factor.issues.some(i => /open.?graph/i.test(i))) {
-          recommendations.push({ text: 'Add Open Graph meta tags (og:title, og:description, og:image) for social sharing', priority: 'medium', category: 'SEO', effort: 'low' });
-        }
-        if (factor.issues.some(i => /sitemap|robots/i.test(i))) {
-          recommendations.push({ text: 'Generate and serve sitemap.xml and robots.txt for search engine crawling', priority: 'medium', category: 'SEO', effort: 'low' });
-        }
-        if (factor.issues.some(i => /structured|json-ld/i.test(i))) {
-          recommendations.push({ text: 'Add structured data (JSON-LD) for rich search result snippets', priority: 'low', category: 'SEO', effort: 'medium' });
-        }
-        break;
-      }
-      case 'Accessibility (WCAG)': {
-        if (factor.issues.some(i => /alt/i.test(i))) {
-          recommendations.push({ text: `Add alt text to all ${siteAnalysis.images?.withoutAlt || 'multiple'} images missing descriptions`, priority: 'high', category: 'Accessibility', effort: 'medium' });
-        }
-        if (factor.issues.some(i => /landmark|aria|semantic/i.test(i))) {
-          recommendations.push({ text: 'Add semantic HTML landmarks (<main>, <nav>, <header>) for screen reader navigation', priority: 'medium', category: 'Accessibility', effort: 'medium' });
-        }
-        if (factor.issues.some(i => /label|form/i.test(i))) {
-          recommendations.push({ text: 'Associate labels with all form inputs for assistive technology users', priority: 'high', category: 'Accessibility', effort: 'low' });
-        }
-        break;
-      }
-      case 'Performance & Optimization': {
-        if (factor.issues.some(i => /compress|gzip/i.test(i))) {
-          recommendations.push({ text: 'Enable gzip/brotli response compression to reduce payload size by 60-80%', priority: 'high', category: 'Performance', effort: 'low' });
-        }
-        if (factor.issues.some(i => /resource|inline/i.test(i))) {
-          recommendations.push({ text: 'Bundle and minify CSS/JS assets; move inline scripts to external files for caching', priority: 'medium', category: 'Performance', effort: 'high' });
-        }
-        if (factor.issues.some(i => /third.?party/i.test(i))) {
-          recommendations.push({ text: 'Audit and reduce third-party script dependencies; self-host critical libraries', priority: 'medium', category: 'Performance', effort: 'high' });
-        }
-        break;
-      }
-      default: {
-        if (factor.failCount > 0) {
-          recommendations.push({ text: `Address ${factor.failCount} failing ${factor.name.toLowerCase()} checks to improve release confidence`, priority: factor.severity === 'critical' ? 'high' : 'medium', category: 'General', effort: 'medium' });
-        }
-        break;
-      }
-    }
-  });
-
-  // Always add monitoring recommendation
-  recommendations.push({
-    text: `Set up post-deployment monitoring — watch error rates for 24h after release (current pass rate: ${summary.passRate}%)`,
-    priority: 'medium',
-    category: 'Operations',
-    effort: 'low',
-  });
-
-  // Dedupe by text
-  const seen = new Set();
-  return recommendations.filter(r => {
-    if (seen.has(r.text)) return false;
-    seen.add(r.text);
-    return true;
-  });
+/** Engine categories → the factor cards Insights shows. */
+function buildFactors(analysis) {
+  const blockerTitles = new Set((analysis.blockers || []).map(b => b.title));
+  return analysis.categories.filter(c => c.measured).map(c => ({
+    name: c.name,
+    score: c.risk,
+    weight: c.weight / 100,
+    description: c.failed
+      ? `${c.failed} of ${c.checks} checks failing — ${c.failures.slice(0, 3).map(f => f.title).join('; ')}`
+      : `All ${c.checks} checks pass`,
+    failCount: c.failed,
+    totalTests: c.checks,
+    severity: severityFor(c, blockerTitles),
+    issues: c.failures.map(f => `[${(f.priority || 'medium').toUpperCase()}] ${f.title}`),
+  }));
 }
 
-/**
- * Generate gatekeeper conditions based on actual failure categories.
- * Returns a varying number of conditions (2-6) depending on real issues.
- */
-function buildGatekeeperConditions(blocked, factors, summary, siteAnalysis) {
-  const conditions = [];
+const CATEGORY_OF_REC = [
+  [/index\.html|load|javascript/i, 'Functionality'],
+  [/https|mixed|content-security|clickjacking|nosniff|cookie|cors|referrer/i, 'Security'],
+  [/compression|slow/i, 'Performance'],
+  [/alt text|landmark|label|skip/i, 'Accessibility'],
+  [/seo/i, 'SEO'],
+];
 
-  if (blocked) {
-    // Build conditions from actual critical/high severity factors
-    const criticalFactors = factors.filter(f => f.severity === 'critical' || f.severity === 'high');
-    criticalFactors.forEach(f => {
-      if (f.name === 'Security Posture') {
-        conditions.push(`Fix ${f.failCount} security vulnerabilities before deployment — ${f.severity} severity`);
-      } else if (f.name === 'Overall Test Pass Rate') {
-        conditions.push(`Improve test pass rate from ${summary.passRate}% to minimum 80% (${summary.failed} tests currently failing)`);
-      } else {
-        conditions.push(`Resolve ${f.failCount} ${f.name.toLowerCase()} issues (current failure rate: ${f.score}%)`);
-      }
-    });
+function detailRecommendations(analysis) {
+  return analysis.recommendations.map((text, i) => {
+    const category = (CATEGORY_OF_REC.find(([p]) => p.test(text)) || [null, 'General'])[1];
+    const priority = category === 'SEO' ? 'low'
+      : i < analysis.blockers.length ? 'critical'
+      : category === 'Functionality' || category === 'Security' ? 'high' : 'medium';
+    return { text, priority, category, effort: /rewrite|header|compression|alt|meta/i.test(text) ? 'low' : 'medium' };
+  }).sort((a, b) => SEVERITY_ORDER.indexOf(a.priority) - SEVERITY_ORDER.indexOf(b.priority));
+}
 
-    if (summary.criticalFails > 0) {
-      conditions.push(`Fix all ${summary.criticalFails} critical-priority test failures immediately`);
-    }
-    conditions.push('Complete peer review of all changes addressing the above issues');
-    conditions.push('Re-run full test suite and achieve passing status before re-requesting deployment');
-  } else {
-    // Approved but with post-deployment conditions
-    conditions.push(`Monitor error rates for 24 hours post-deployment (current baseline: ${summary.passRate}% pass rate)`);
-    if (summary.failed > 0) {
-      conditions.push(`Schedule fixes for ${summary.failed} non-blocking test failures in next sprint`);
-    }
-    const lowFactors = factors.filter(f => f.severity === 'medium' || f.severity === 'low').filter(f => f.failCount > 0);
-    if (lowFactors.length > 0) {
-      conditions.push(`Track ${lowFactors.length} low-severity improvement areas: ${lowFactors.map(f => f.name).join(', ')}`);
-    }
-    conditions.push('Keep rollback plan active for 48 hours');
+function buildGatekeeperConditions(analysis, summary) {
+  if (analysis.deployment === 'blocked') {
+    return [
+      ...analysis.reasons.map(r => `Fix: ${r}`),
+      'Re-run the tests and confirm no release blockers remain',
+    ];
   }
-
+  const conditions = [`Monitor error rates for 24 hours after release (baseline: ${summary.passRate}% of checks passing)`];
+  for (const w of analysis.categories.filter(c => c.failed && (c.key === 'functionality' || c.key === 'security'))) {
+    conditions.push(`Schedule the ${w.failed} failing ${w.name.toLowerCase()} check(s) for the next sprint`);
+  }
+  conditions.push('Keep a rollback plan ready for 48 hours');
   return conditions;
 }
-
 
 
 router.post('/predict-risk', async (req, res) => {
   try {
     const ctx = getProjectContext();
     const websiteUrl = ctx.websiteUrl || 'https://example.com';
+    const S = getSession();
 
-    let siteAnalysis, testResults, summary;
+    let siteAnalysis, testResults, summary, analysis;
 
-    // Reuse cached results from the dashboard pipeline (includes Selenium, Newman, ZAP)
-    // so that Insights shows the same test counts and pass rates as Dashboard/Test Studio.
+    // Reuse the dashboard pipeline's results AND its risk analysis, so
+    // Insights and the Dashboard always show the same score and decision.
     const cached = getCachedTestResults();
     if (cached && cached.testResults && cached.testResults.length > 0) {
-      console.log(`[Risk] Using cached pipeline results (${cached.testResults.length} tests)`);
       siteAnalysis = cached.siteAnalysis;
       testResults = cached.testResults;
       summary = cached.summary || summarizeResults(testResults);
+      if (S.lastRiskAnalysis?.cachedAt === cached.cachedAt) analysis = S.lastRiskAnalysis.analysis;
     } else {
-      // No cache — fall back to fresh crawl + base tests only
       console.log('[Risk] No cached results — running fresh crawl and tests');
       siteAnalysis = await crawlWebsite(websiteUrl);
       testResults = await runTests(websiteUrl, siteAnalysis);
       summary = summarizeResults(testResults);
     }
+    if (!analysis) analysis = await analyzeRisk(siteAnalysis, testResults, summary);
 
-    // AI or rule-based risk analysis
-    const riskAnalysis = await analyzeRisk(siteAnalysis, testResults, summary);
-    const riskScore = riskAnalysis.riskScore;
-    const riskLevel = riskAnalysis.riskLevel;
-    const deployment = riskAnalysis.deployment || (riskScore >= 60 ? 'blocked' : 'approved');
-    const blocked = deployment.toUpperCase() === 'BLOCKED';
-
-    // Build detailed, dynamic factors from actual test results
-    const factors = buildDetailedFactors(testResults, siteAnalysis, summary);
-
-    // Build contextual recommendations (variable count)
-    const recommendations = buildRecommendations(factors, siteAnalysis, summary);
-
-    // Build gatekeeper conditions (variable count)
-    const conditions = buildGatekeeperConditions(blocked, factors, summary, siteAnalysis);
-
-    // Build risk trend (scoped to this URL)
+    const { riskScore, riskLevel, deployment } = analysis;
+    const factors = buildFactors(analysis);
+    const detailedRecommendations = detailRecommendations(analysis);
     const trend = buildRiskTrend(riskScore, riskLevel, websiteUrl);
-
-    // Category breakdown for the frontend
-    const categoryBreakdown = factors
-      .filter(f => f.name !== 'Overall Test Pass Rate')
-      .map(f => ({
-        name: f.name,
-        passed: f.totalTests - f.failCount,
-        failed: f.failCount,
-        total: f.totalTests,
-        passRate: f.totalTests > 0 ? Math.round(((f.totalTests - f.failCount) / f.totalTests) * 100) : 100,
-      }));
 
     res.json({
       success: true,
-      agents: ['Website Crawler Agent', 'Test Execution Agent', 'Risk Analysis Agent', 'CI/CD Gatekeeper Agent'],
+      agents: ['Website Crawler Agent', 'Test Execution Agent', 'Page Explorer Agent', 'Risk Analysis Agent', 'CI/CD Gatekeeper Agent'],
       risk: {
         riskScore,
         riskLevel,
         factors,
-        explanation: riskAnalysis.summary,
-        recommendations: recommendations.map(r => r.text),
-        detailedRecommendations: recommendations,
+        explanation: analysis.summary,
+        formula: analysis.formula,
+        recommendations: detailedRecommendations.map(r => r.text),
+        detailedRecommendations,
         deployment,
-        source: riskAnalysis.source,
-        categoryBreakdown,
+        source: analysis.source,
+        categoryBreakdown: factors.map(f => ({
+          name: f.name,
+          passed: f.totalTests - f.failCount,
+          failed: f.failCount,
+          total: f.totalTests,
+          passRate: f.totalTests ? Math.round(((f.totalTests - f.failCount) / f.totalTests) * 100) : 100,
+        })),
       },
       gatekeeper: {
         decision: deployment.toUpperCase(),
         riskScore,
         riskLevel,
-        reasoning: riskAnalysis.summary,
-        conditions,
+        reasoning: analysis.summary,
+        blockers: analysis.reasons,
+        conditions: buildGatekeeperConditions(analysis, summary),
       },
       trend,
       testSummary: summary,

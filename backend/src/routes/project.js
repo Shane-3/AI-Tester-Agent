@@ -8,12 +8,17 @@
 
 const express = require('express');
 const router = express.Router();
-const { setProjectContext, getProjectContext, setCachedGitHubData } = require('../services/aiSimulator');
+const { setProjectContext, getProjectContext, setCachedGitHubData } = require('../services/projectContext');
 const { invalidateDashboardCache } = require('./dashboard');
 const { invalidateTestCache } = require('../services/testRunner');
+const { getSession } = require('../services/sessionStore');
+const { assertPublicUrl } = require('../services/urlGuard');
+const { parseGitHubUrl } = require('../services/codeAnalyzer');
+const { getRepoOverview, RepoAccessError } = require('../services/githubClient');
+const { detectLogin } = require('../services/siteExplorer');
 
 
-router.post('/configure-project', (req, res) => {
+router.post('/configure-project', async (req, res) => {
   try {
     const { name, websiteUrl, repoUrl, description } = req.body;
 
@@ -23,9 +28,28 @@ router.post('/configure-project', (req, res) => {
       });
     }
 
-    setProjectContext({ name, websiteUrl, repoUrl, description });
+    const update = { name, description };
+    if (typeof websiteUrl === 'string') {
+      update.websiteUrl = websiteUrl.trim() ? await assertPublicUrl(websiteUrl) : '';
+    }
+    if (typeof repoUrl === 'string') {
+      if (repoUrl.trim()) {
+        const parsed = parseGitHubUrl(repoUrl);
+        if (!parsed) {
+          return res.status(400).json({ error: 'Invalid GitHub URL', message: 'Expected a URL like https://github.com/owner/repo' });
+        }
+        update.repoUrl = `https://github.com/${parsed.owner}/${parsed.repo}`;
+      } else {
+        update.repoUrl = '';
+      }
+    }
+
+    setProjectContext(update);
     invalidateDashboardCache(); // Clear cached dashboard so next load re-runs pipeline
     invalidateTestCache(); // Clear cached test results so Test Studio re-runs with new project
+    const S = getSession();
+    S.testStudioCache = null;
+    S.fixesCache = null;
 
     res.json({
       success: true,
@@ -33,7 +57,8 @@ router.post('/configure-project', (req, res) => {
       project: getProjectContext(),
     });
   } catch (error) {
-    res.status(500).json({ error: 'Configuration failed', message: error.message });
+    const status = error.status || 500;
+    res.status(status).json({ error: status === 400 ? 'Invalid project settings' : 'Configuration failed', message: error.message });
   }
 });
 
@@ -45,7 +70,21 @@ router.get('/project-info', (req, res) => {
   });
 });
 
-// Fetches real data from a public GitHub repo (no auth needed for public repos)
+// Checks whether the configured website has a login page, so the UI can ask
+// for a test account before running the pipeline.
+router.post('/detect-login', async (req, res) => {
+  try {
+    const { websiteUrl } = getProjectContext();
+    if (!websiteUrl) return res.status(400).json({ error: 'No website URL configured.' });
+    const detection = await detectLogin(websiteUrl);
+    res.json({ success: true, ...detection });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: 'Login detection failed', message: error.message });
+  }
+});
+
+// Fetches repo info, recent commits, and languages. Works without any token
+// for public repos (see services/githubClient.js).
 
 router.get('/github-repo', async (req, res) => {
   try {
@@ -59,72 +98,21 @@ router.get('/github-repo', async (req, res) => {
       });
     }
 
-    // Parse GitHub URL → owner/repo
-    const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
-    if (!match) {
+    const parsed = parseGitHubUrl(repoUrl);
+    if (!parsed) {
       return res.status(400).json({ error: 'Invalid GitHub URL format. Expected: https://github.com/owner/repo' });
     }
 
-    const [, owner, repo] = match;
-    const repoName = repo.replace(/\.git$/, '');
-    const apiBase = `https://api.github.com/repos/${owner}/${repoName}`;
-
-    // Fetch repo info, recent commits, and languages in parallel
-    const headers = { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'AI-Tester-Agent' };
-
-    const [repoInfo, commitsData, languagesData] = await Promise.all([
-      fetch(apiBase, { headers }).then(r => r.json()),
-      fetch(`${apiBase}/commits?per_page=10`, { headers }).then(r => r.json()),
-      fetch(`${apiBase}/languages`, { headers }).then(r => r.json()),
-    ]);
-
-    // Handle GitHub API errors
-    if (repoInfo.message === 'Not Found') {
-      return res.status(404).json({ error: 'Repository not found. Make sure it is public.' });
-    }
-    if (repoInfo.message?.includes('rate limit')) {
-      return res.status(429).json({ error: 'GitHub API rate limit exceeded. Try again in a few minutes.' });
-    }
-
-    // Parse commits into our format
-    const recentCommits = Array.isArray(commitsData) ? commitsData.map(c => ({
-      sha: c.sha?.substring(0, 7),
-      message: c.commit?.message?.split('\n')[0] || '',
-      author: c.commit?.author?.name || 'Unknown',
-      date: c.commit?.author?.date,
-      url: c.html_url,
-    })) : [];
-
-    // Parse languages
-    const totalBytes = Object.values(languagesData || {}).reduce((sum, val) => sum + (val || 0), 0);
-    const languages = Object.entries(languagesData || {}).map(([name, bytes]) => ({
-      name,
-      percentage: totalBytes > 0 ? Math.round((bytes / totalBytes) * 100) : 0,
-    }));
-
-    const responseData = {
-      success: true,
-      repository: {
-        name: repoInfo.full_name || `${owner}/${repoName}`,
-        description: repoInfo.description || '',
-        url: repoInfo.html_url || repoUrl,
-        stars: repoInfo.stargazers_count || 0,
-        forks: repoInfo.forks_count || 0,
-        openIssues: repoInfo.open_issues_count || 0,
-        defaultBranch: repoInfo.default_branch || 'main',
-        language: repoInfo.language || 'Unknown',
-        updatedAt: repoInfo.updated_at,
-        visibility: repoInfo.private ? 'private' : 'public',
-      },
-      recentCommits,
-      languages,
-    };
+    const responseData = await getRepoOverview(parsed.owner, parsed.repo);
 
     // Cache GitHub data so all agents use it for dynamic analysis
     setCachedGitHubData(responseData);
 
     res.json(responseData);
   } catch (error) {
+    if (error instanceof RepoAccessError) {
+      return res.status(error.status).json({ error: error.message, message: error.message });
+    }
     console.error('GitHub fetch error:', error);
     res.status(500).json({ error: 'Failed to fetch repository data', message: error.message });
   }

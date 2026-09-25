@@ -7,19 +7,58 @@
  */
 
 let seleniumAvailable = false;
-let Builder, By, until, Options;
+let Builder, By, until, Options, ServiceBuilder, logging;
 
-try {
-  const selenium = require('selenium-webdriver');
-  const chrome = require('selenium-webdriver/chrome');
-  Builder = selenium.Builder;
-  By = selenium.By;
-  until = selenium.until;
-  Options = chrome.Options;
-  seleniumAvailable = true;
-  console.log('[Selenium] WebDriver loaded — Chrome tests enabled');
-} catch (err) {
-  console.warn('[Selenium] WebDriver not available:', err.message);
+if (process.env.SELENIUM_ENABLED === 'false') {
+  console.log('[Selenium] Disabled via SELENIUM_ENABLED=false');
+} else {
+  try {
+    const selenium = require('selenium-webdriver');
+    const chrome = require('selenium-webdriver/chrome');
+    Builder = selenium.Builder;
+    By = selenium.By;
+    until = selenium.until;
+    Options = chrome.Options;
+    ServiceBuilder = chrome.ServiceBuilder;
+    logging = selenium.logging;
+    seleniumAvailable = true;
+    console.log('[Selenium] WebDriver loaded — Chrome tests enabled');
+  } catch (err) {
+    console.warn('[Selenium] WebDriver not available:', err.message);
+  }
+}
+
+// Each headless Chrome uses ~200-300 MB, so on small hosted instances only a
+// limited number may run at once. Extra runs wait in a queue for a slot.
+const MAX_CONCURRENT = Math.max(1, parseInt(process.env.SELENIUM_MAX_CONCURRENCY || '1', 10));
+// A logged-in crawl can hold Chrome for ~2 minutes, so waiters are patient
+const QUEUE_WAIT_MS = 150000;
+let activeRuns = 0;
+const waiting = [];
+
+function acquireSlot() {
+  if (activeRuns < MAX_CONCURRENT) {
+    activeRuns++;
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    const entry = { resolve, timer: null };
+    entry.timer = setTimeout(() => {
+      waiting.splice(waiting.indexOf(entry), 1);
+      resolve(false);
+    }, QUEUE_WAIT_MS);
+    waiting.push(entry);
+  });
+}
+
+function releaseSlot() {
+  const next = waiting.shift();
+  if (next) {
+    clearTimeout(next.timer);
+    next.resolve(true); // hand the slot straight to the next waiter
+  } else {
+    activeRuns--;
+  }
 }
 
 const TIMEOUT = 20000; // 20s per test
@@ -28,8 +67,14 @@ const NAVIGATION_TIMEOUT = 15000;
 /**
  * Build a headless Chrome driver
  */
-async function createDriver() {
+async function createDriver({ captureConsole = false } = {}) {
   const options = new Options();
+  if (captureConsole) {
+    // Collect page JavaScript errors (read back via driver.manage().logs())
+    const prefs = new logging.Preferences();
+    prefs.setLevel(logging.Type.BROWSER, logging.Level.SEVERE);
+    options.setLoggingPrefs(prefs);
+  }
   options.addArguments(
     '--headless=new',
     '--disable-gpu',
@@ -43,10 +88,13 @@ async function createDriver() {
     '--disable-translate',
   );
 
-  const driver = await new Builder()
-    .forBrowser('chrome')
-    .setChromeOptions(options)
-    .build();
+  // In Docker, use the system Chromium + chromedriver (see backend/Dockerfile).
+  // Otherwise Selenium Manager locates/downloads a matching driver.
+  if (process.env.CHROME_BIN) options.setChromeBinaryPath(process.env.CHROME_BIN);
+  const builder = new Builder().forBrowser('chrome').setChromeOptions(options);
+  if (process.env.CHROMEDRIVER_PATH) builder.setChromeService(new ServiceBuilder(process.env.CHROMEDRIVER_PATH));
+
+  const driver = await builder.build();
 
   await driver.manage().setTimeouts({
     implicit: 5000,
@@ -69,10 +117,17 @@ async function runSeleniumTests(url, siteAnalysis) {
     return [];
   }
 
+  if (!(await acquireSlot())) {
+    console.warn('[Selenium] Skipped — all browser slots busy');
+    return [];
+  }
+  // The slot is held until Chrome has actually exited, even if we time out below
+  const run = _runSeleniumTestsInternal(url, siteAnalysis).finally(releaseSlot);
+
   // Wrap in a timeout so Selenium never blocks the pipeline
   const SELENIUM_TIMEOUT = 30000; // 30s max for all Selenium tests
   return Promise.race([
-    _runSeleniumTestsInternal(url, siteAnalysis),
+    run,
     new Promise((resolve) => {
       setTimeout(() => {
         console.warn('[Selenium] Timed out after 30s — skipping');
@@ -324,4 +379,11 @@ async function _runSeleniumTestsInternal(url, siteAnalysis) {
   return results;
 }
 
-module.exports = { runSeleniumTests, seleniumAvailable };
+module.exports = {
+  runSeleniumTests,
+  createDriver,
+  acquireSlot,
+  releaseSlot,
+  isSeleniumAvailable: () => seleniumAvailable,
+  logging: () => logging,
+};

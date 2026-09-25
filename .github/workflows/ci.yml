@@ -57,10 +57,29 @@ jobs:
       - name: Health Check (Start & Verify)
         run: |
           node src/index.js &
-          sleep 3
+          for i in $(seq 1 30); do curl -sf http://localhost:5000/api/health > /dev/null && break; sleep 1; done
           curl -f http://localhost:5000/api/health || exit 1
           kill %1
         working-directory: backend
+
+  # ─── Stage 2b: Backend Docker Image (what Render deploys) ───────────────────
+  docker-build:
+    name: 🐳 Backend Docker Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t ai-tester-api ./backend
+
+      - name: Start container & verify health + Chromium
+        run: |
+          docker run -d --name api -p 5000:5000 ai-tester-api
+          for i in $(seq 1 30); do curl -sf http://localhost:5000/api/health && break; sleep 2; done
+          curl -sf http://localhost:5000/api/health
+          docker exec api chromium --version
+          docker exec api chromedriver --version
+          docker rm -f api
 
   # ─── Stage 3: Frontend Build ────────────────────────────────────────────────
   build:
@@ -94,7 +113,7 @@ jobs:
   risk-gate:
     name: 🚦 Risk Assessment Gate
     runs-on: ubuntu-latest
-    needs: [backend-test, build]
+    needs: [backend-test, docker-build, build]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -108,37 +127,44 @@ jobs:
         working-directory: backend
 
       - name: Start Backend & Run Risk Prediction
+        # Set the repository variable RISK_GATE_URL (Settings → Secrets and
+        # variables → Actions → Variables) to the site this gate should check,
+        # e.g. your deployed frontend. Without it the gate is skipped.
+        env:
+          RISK_GATE_URL: ${{ vars.RISK_GATE_URL }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
+          if [ -z "$RISK_GATE_URL" ]; then
+            echo "::notice::Risk gate skipped — set the RISK_GATE_URL repository variable to enable it"
+            exit 0
+          fi
+
           node src/index.js &
-          sleep 3
-          
-          echo "🔍 Running AI Risk Prediction..."
-          RISK_RESPONSE=$(curl -s -X POST http://localhost:5000/api/predict-risk \
-            -H "Content-Type: application/json" \
-            -d '{"projectId": "ci-check", "context": {}}')
-          
-          echo "📊 Risk Assessment Response:"
-          echo "$RISK_RESPONSE" | jq .
-          
-          # Extract risk score and check threshold
+          for i in $(seq 1 30); do curl -sf http://localhost:5000/api/health > /dev/null && break; sleep 1; done
+
+          SID='X-Session-Id: ci-risk-gate-run'
+          jq -n --arg url "$RISK_GATE_URL" '{name: "CI", websiteUrl: $url}' \
+            | curl -sf -X POST http://localhost:5000/api/configure-project -H 'Content-Type: application/json' -H "$SID" -d @- > /dev/null
+
+          echo "🔍 Running the agent pipeline against $RISK_GATE_URL..."
+          curl -sf http://localhost:5000/api/dashboard-data -H "$SID" > /dev/null
+          RISK_RESPONSE=$(curl -s -X POST http://localhost:5000/api/predict-risk -H 'Content-Type: application/json' -H "$SID" -d '{}')
+
           RISK_SCORE=$(echo "$RISK_RESPONSE" | jq '.risk.riskScore')
           DECISION=$(echo "$RISK_RESPONSE" | jq -r '.gatekeeper.decision')
-          
-          echo ""
+
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Risk Score: $RISK_SCORE / 100"
           echo "Gatekeeper Decision: $DECISION"
+          echo "$RISK_RESPONSE" | jq -r '.gatekeeper.blockers[]? | "  ✗ " + .'
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          
-          if [ "$DECISION" = "BLOCKED" ]; then
-            echo "❌ Deployment BLOCKED - Risk score too high"
-            echo "::error::Deployment blocked by AI Risk Agent (score: $RISK_SCORE)"
-            exit 1
-          else
-            echo "✅ Deployment APPROVED - Risk within acceptable range"
-          fi
-          
+
           kill %1
+          if [ "$DECISION" = "BLOCKED" ]; then
+            echo "::error::Deployment blocked by the risk gate (score: $RISK_SCORE)"
+            exit 1
+          fi
+          echo "✅ Deployment approved"
         working-directory: backend
 
   # ─── Stage 5: Deploy (on main only) ────────────────────────────────────────

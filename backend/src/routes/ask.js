@@ -3,28 +3,14 @@
  * 
  * POST /api/ask
  * Natural language questions about the codebase.
- * Fetches relevant source files and sends to Gemini for analysis.
+ * Fetches relevant source files and sends them to the AI model for analysis.
  */
 
 const express = require('express');
 const router = express.Router();
 const { parseGitHubUrl, fetchRepoTree, selectFilesForQuestion, fetchFileContents } = require('../services/codeAnalyzer');
-const { askAboutCode } = require('../services/geminiAgent');
-const { getProjectContext } = require('../services/aiSimulator');
-
-// Cache the repo tree so we don't re-fetch it every question
-let treeCache = { owner: null, repo: null, tree: null, branch: null, fetchedAt: 0 };
-const TREE_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
-
-async function getCachedTree(owner, repo) {
-  const now = Date.now();
-  if (treeCache.owner === owner && treeCache.repo === repo && (now - treeCache.fetchedAt) < TREE_CACHE_TTL) {
-    return { tree: treeCache.tree, branch: treeCache.branch };
-  }
-  const result = await fetchRepoTree(owner, repo);
-  treeCache = { owner, repo, tree: result.tree, branch: result.branch, fetchedAt: now };
-  return result;
-}
+const { askAboutCode } = require('../services/aiAgent');
+const { getProjectContext } = require('../services/projectContext');
 
 router.post('/ask', async (req, res) => {
   try {
@@ -58,14 +44,14 @@ router.post('/ask', async (req, res) => {
     console.log(`[Ask] Question: "${question.substring(0, 60)}..."`);
     let tree, branch;
     try {
-      const result = await getCachedTree(owner, repo);
+      const result = await fetchRepoTree(owner, repo); // cached snapshot
       tree = result.tree;
       branch = result.branch;
     } catch (err) {
       console.error('[Ask] Failed to fetch repo tree:', err.message);
       return res.json({
         success: true,
-        answer: `I couldn't fetch the repository at **${owner}/${repo}**. The repo may be private, not exist, or GitHub API rate limits may apply. Please verify the GitHub repository URL in your project settings.\n\nError: ${err.message}`,
+        answer: `I couldn't fetch the repository at **${owner}/${repo}**.\n\n${err.message}`,
         references: [],
         confidence: 0.1,
         source: 'system',
@@ -93,7 +79,7 @@ router.post('/ask', async (req, res) => {
     const filePaths = relevantFiles.map(f => f.path);
     const fileContents = await fetchFileContents(owner, repo, filePaths);
 
-    // Step 4: Ask Gemini
+    // Step 4: Ask the AI model
     const result = await askAboutCode(question, fileContents, ctx);
     const durationMs = Date.now() - startTime;
 

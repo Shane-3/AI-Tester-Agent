@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import { useAppStore } from "@/lib/store";
 import {
@@ -113,7 +113,7 @@ function effortLabel(effort: string) {
 
 export default function InsightsPage() {
   const {
-    riskReport, riskLoading, runRiskPrediction,
+    riskReport, riskLoading, riskError, runRiskPrediction,
     dashboard, loadDashboard,
     projectConfig, loadProjectInfo,
     metrics, loadMetrics, submitFeedback,
@@ -124,12 +124,18 @@ export default function InsightsPage() {
   const [feedbackSent, setFeedbackSent] = useState<string | null>(null);
   const [feedbackResult, setFeedbackResult] = useState<string | null>(null);
 
+  // Load missing data once per visit (not on every state change, which would
+  // start duplicate runs while one is in flight or loop after an error)
+  const initialLoad = useRef(false);
   useEffect(() => {
-    if (!riskReport) runRiskPrediction();
-    if (!dashboard) loadDashboard();
-    if (!projectConfig) loadProjectInfo();
-    if (!metrics) loadMetrics();
-  }, [riskReport, dashboard, runRiskPrediction, loadDashboard, projectConfig, loadProjectInfo, metrics, loadMetrics]);
+    if (initialLoad.current) return;
+    initialLoad.current = true;
+    const state = useAppStore.getState();
+    if (!state.riskReport) runRiskPrediction();
+    if (!state.dashboard && !state.dashboardLoading) loadDashboard();
+    if (!state.projectConfig) loadProjectInfo();
+    if (!state.metrics) loadMetrics();
+  }, [runRiskPrediction, loadDashboard, loadProjectInfo, loadMetrics]);
 
   const handleFeedback = async (outcome: 'smooth' | 'minor' | 'major') => {
     setFeedbackSent(outcome);
@@ -190,8 +196,10 @@ export default function InsightsPage() {
         ) : !risk ? (
           <div className="glass-card" style={{ padding: 50, textAlign: "center" }}>
             <BarChart3 size={32} color="var(--text-muted)" style={{ margin: "0 auto 12px" }} />
-            <div style={{ fontSize: 14, marginBottom: 4, fontWeight: 600 }}>No Analysis Yet</div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>Run a risk analysis to see detailed insights about your release</div>
+            <div style={{ fontSize: 14, marginBottom: 4, fontWeight: 600 }}>{riskError ? "Analysis Failed" : "No Analysis Yet"}</div>
+            <div style={{ fontSize: 12, color: riskError ? "var(--accent-red)" : "var(--text-muted)", marginBottom: 16 }}>
+              {riskError || "Run a risk analysis to see detailed insights about your release"}
+            </div>
             <button className="btn-primary" onClick={() => runRiskPrediction()}>
               <Zap size={13} /> Run Analysis
             </button>
@@ -308,8 +316,8 @@ export default function InsightsPage() {
                 <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{factors.length} categories analyzed</span>
               </div>
 
-              <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 16 }}>
-                {risk?.explanation}
+              <p style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6, marginBottom: 16 }}>
+                {risk?.formula}
               </p>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

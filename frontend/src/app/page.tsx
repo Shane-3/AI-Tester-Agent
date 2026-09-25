@@ -4,6 +4,10 @@ import { useEffect, useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import { useAppStore } from "@/lib/store";
 import {
+  getGitHubToken, setGitHubToken,
+  getSiteLogin, setSiteLogin, isLoginSkipped, setLoginSkipped, detectLogin,
+} from "@/lib/api";
+import {
   FlaskConical,
   CheckCircle2,
   XCircle,
@@ -20,23 +24,57 @@ import {
   ExternalLink,
   Loader2,
   TrendingDown,
+  TrendingUp,
+  Minus,
+  Lock,
 } from "lucide-react";
 
 
+/** Same normalization the backend applies (adds https:// if missing). */
+function normalizeSite(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+function pathOf(url: string) {
+  try {
+    return new URL(url).pathname || "/";
+  } catch {
+    return url;
+  }
+}
+
 function ProjectConfigPanel() {
   const {
-    projectConfig, configureProject: saveProject, loadProjectInfo,
-    githubRepo, githubLoading, fetchGitHubRepo,
-    loadDashboard,
+    projectConfig, projectError, configureProject: saveProject, loadProjectInfo,
+    githubRepo, githubLoading, githubError, fetchGitHubRepo,
+    loadDashboard, loginPrompt, setLoginPrompt, setHoldPipeline,
   } = useAppStore();
 
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
   const [projectName, setProjectName] = useState("");
+  const [githubToken, setGithubTokenInput] = useState("");
+  const [showToken, setShowToken] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+
+  // Test-account login for the user's site
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [loginUrl, setLoginUrl] = useState("");
+  const [loginUser, setLoginUser] = useState("");
+  const [loginPass, setLoginPass] = useState("");
+  const [hasSavedLogin, setHasSavedLogin] = useState(false);
+  const [checkingLogin, setCheckingLogin] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   useEffect(() => {
     loadProjectInfo();
+    const token = getGitHubToken();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setGithubTokenInput(token);
+    setShowToken(!!token);
   }, [loadProjectInfo]);
 
   useEffect(() => {
@@ -45,17 +83,92 @@ function ProjectConfigPanel() {
       setWebsiteUrl(projectConfig.websiteUrl || "");
       setRepoUrl(projectConfig.repoUrl || "");
       setProjectName(projectConfig.name || "");
+      const savedLogin = getSiteLogin(projectConfig.websiteUrl);
+      setLoginUrl(savedLogin?.loginUrl || "");
+      setLoginUser(savedLogin?.username || "");
+      setLoginPass(savedLogin?.password || "");
+      setHasSavedLogin(!!savedLogin);
+      if (savedLogin) setLoginOpen(true);
     }
   }, [projectConfig]);
 
+  // "Add test account" from the results, or a login page found on Save
+  useEffect(() => {
+    if (loginPrompt) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLoginOpen(true);
+      setLoginUrl((current) => current || loginPrompt.loginUrl);
+      document.getElementById("site-login")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [loginPrompt]);
+
   const handleSave = async () => {
-    await saveProject({ name: projectName, websiteUrl, repoUrl });
+    setLoginError(null);
+    const site = normalizeSite(websiteUrl);
+    const wantsLogin = !!(loginUser.trim() && loginPass);
+    if ((loginUser.trim() || loginPass) && !wantsLogin) {
+      setLoginError("Enter both the email/username and the password — or leave both empty.");
+      return;
+    }
+    if (loginPrompt && !wantsLogin) {
+      setLoginError("Enter the test account's email/username and password, or choose “Test public pages only”.");
+      return;
+    }
+
+    setSaving(true);
+    setHoldPipeline(true); // nothing starts testing until we know about the login
+    setLoginPrompt(null);
+    setGitHubToken(githubToken);
+    if (site && wantsLogin) {
+      setSiteLogin(site, { loginUrl: loginUrl.trim() || undefined, username: loginUser.trim(), password: loginPass });
+      setLoginSkipped(site, false);
+      setHasSavedLogin(true);
+    }
+
+    const ok = await saveProject({ name: projectName, websiteUrl, repoUrl });
+    if (!ok) {
+      setSaving(false);
+      setHoldPipeline(false);
+      return;
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-    if (repoUrl && repoUrl.includes("github.com")) {
-      await fetchGitHubRepo(repoUrl);
+    if (repoUrl.trim()) fetchGitHubRepo(repoUrl);
+
+    // Look for a login page first, so we can ask for a test account before testing
+    if (site && !wantsLogin && !isLoginSkipped(site)) {
+      setCheckingLogin(true);
+      const detection = await detectLogin().catch(() => null);
+      setCheckingLogin(false);
+      if (detection?.detected && detection.loginUrl) {
+        setLoginUrl(detection.loginUrl);
+        setLoginPrompt({ loginUrl: detection.loginUrl, how: detection.how });
+        setSaving(false);
+        setHoldPipeline(false); // the prompt itself keeps the pipeline waiting
+        return;
+      }
     }
+
+    setSaving(false);
+    setHoldPipeline(false);
     loadDashboard();
+  };
+
+  const skipLogin = () => {
+    const site = normalizeSite(websiteUrl);
+    if (site) setLoginSkipped(site, true);
+    setLoginError(null);
+    setLoginPrompt(null);
+    if (!useAppStore.getState().dashboard) loadDashboard();
+  };
+
+  const removeLogin = () => {
+    const site = normalizeSite(websiteUrl);
+    if (site) setSiteLogin(site, null);
+    setLoginUser("");
+    setLoginPass("");
+    setLoginUrl("");
+    setHasSavedLogin(false);
   };
 
   const inputStyle = {
@@ -100,9 +213,118 @@ function ProjectConfigPanel() {
         </div>
       </div>
 
-      <button className="btn-primary" onClick={handleSave} style={{ marginBottom: githubRepo ? 16 : 0 }}>
-        {githubLoading ? <><Loader2 size={13} className="animate-spin" /> Connecting...</> : "Save & Connect"}
-      </button>
+      {showToken ? (
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
+            GitHub Access Token <span style={{ opacity: 0.8 }}>(optional — only for private repositories)</span>
+          </label>
+          <input type="password" value={githubToken} onChange={(e) => setGithubTokenInput(e.target.value)}
+            placeholder="github_pat_…" autoComplete="off" style={inputStyle} />
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+            Stored only in this browser and sent with your requests — never saved on the server.
+            Use a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer"
+              style={{ color: "var(--accent-blue)" }}>fine-grained token</a> with read-only &quot;Contents&quot; access to the repo.
+            Public repositories need no token.
+          </div>
+        </div>
+      ) : (
+        <button type="button" onClick={() => setShowToken(true)}
+          style={{ background: "none", border: "none", padding: 0, marginBottom: 12, fontSize: 11, color: "var(--accent-blue)", cursor: "pointer" }}>
+          Private repository? Add a GitHub token
+        </button>
+      )}
+
+      <div id="site-login" style={{ marginBottom: 12 }}>
+        {loginPrompt && (
+          <div style={{
+            display: "flex", gap: 10, alignItems: "flex-start", padding: "12px 14px", marginBottom: 12,
+            borderRadius: 6, border: "1px solid var(--accent-amber)", background: "rgba(234 179 8 / 0.08)",
+          }}>
+            <Lock size={16} color="var(--accent-amber)" style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ fontSize: 12, lineHeight: 1.6, color: "var(--text-secondary)" }}>
+              <strong style={{ color: "var(--text-primary)" }}>This site has a login page</strong> ({pathOf(loginPrompt.loginUrl)}).
+              {" "}Pages behind a login can only be tested with an account. Add a <strong>test account</strong> below
+              {" "}so we can log in and test those pages too — or test the public pages only.
+            </div>
+          </div>
+        )}
+
+        {loginOpen ? (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
+                  Login page URL <span style={{ opacity: 0.8 }}>(optional)</span>
+                </label>
+                <input type="url" value={loginUrl} onChange={(e) => setLoginUrl(e.target.value)}
+                  placeholder="Found automatically" style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
+                  Test account email / username
+                </label>
+                <input type="text" value={loginUser} onChange={(e) => setLoginUser(e.target.value)}
+                  placeholder="test@yoursite.com" autoComplete="off" style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
+                  Test account password
+                </label>
+                <input type="password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)}
+                  placeholder="••••••••" autoComplete="new-password" style={inputStyle} />
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6, lineHeight: 1.6 }}>
+              Use a <strong>test account</strong>, not your real one. It&apos;s remembered only in this browser and sent only while tests
+              run — never stored on our server or shown to the AI. We only follow links after logging in (no buttons, no forms).
+              Logins with CAPTCHA, 2FA codes or &quot;Sign in with Google&quot; can&apos;t be automated.
+              {hasSavedLogin && (
+                <button type="button" onClick={removeLogin}
+                  style={{ background: "none", border: "none", padding: 0, marginLeft: 6, fontSize: 11, color: "var(--accent-red)", cursor: "pointer" }}>
+                  Remove saved login
+                </button>
+              )}
+            </div>
+          </>
+        ) : (
+          <button type="button" onClick={() => setLoginOpen(true)}
+            style={{ background: "none", border: "none", padding: 0, fontSize: 11, color: "var(--accent-blue)", cursor: "pointer" }}>
+            Does your site have a login? Add a test account
+          </button>
+        )}
+
+        {loginError && (
+          <div style={{ fontSize: 12, color: "var(--accent-red)", marginTop: 8, display: "flex", gap: 6, alignItems: "center" }}>
+            <AlertCircle size={13} /> {loginError}
+          </div>
+        )}
+      </div>
+
+      {projectError && (
+        <div style={{ fontSize: 12, color: "var(--accent-red)", marginBottom: 10, display: "flex", gap: 6, alignItems: "center" }}>
+          <AlertCircle size={13} /> {projectError}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: githubRepo ? 16 : 0 }}>
+        <button className="btn-primary" onClick={handleSave} disabled={saving || githubLoading}>
+          {checkingLogin ? <><Loader2 size={13} className="animate-spin" /> Checking for a login page…</>
+            : saving || githubLoading ? <><Loader2 size={13} className="animate-spin" /> Connecting...</>
+            : loginPrompt ? "Save login & run tests" : "Save & Connect"}
+        </button>
+        {loginPrompt && (
+          <button type="button" onClick={skipLogin} disabled={saving}
+            style={{ background: "none", border: "1px solid var(--border-color)", borderRadius: 4, padding: "7px 12px", fontSize: 12, color: "var(--text-secondary)", cursor: "pointer" }}>
+            Test public pages only
+          </button>
+        )}
+      </div>
+
+      {githubError && !githubLoading && (
+        <div style={{ fontSize: 12, color: "var(--accent-red)", marginTop: 10, display: "flex", gap: 6, alignItems: "center" }}>
+          <AlertCircle size={13} /> {githubError}
+        </div>
+      )}
 
       {githubRepo?.repository && (
         <div style={{ padding: 14, background: "var(--bg-primary)", borderRadius: 6, border: "1px solid var(--border-color)", marginTop: 12 }}>
@@ -118,9 +340,13 @@ function ProjectConfigPanel() {
           </div>
 
           <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--text-secondary)", marginBottom: 10 }}>
-            <span style={{ display: "flex", alignItems: "center", gap: 3 }}><Star size={12} /> {githubRepo.repository.stars}</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 3 }}><GitFork size={12} /> {githubRepo.repository.forks}</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 3 }}><AlertCircle size={12} /> {githubRepo.repository.openIssues} issues</span>
+            {githubRepo.repository.stars != null && (
+              <>
+                <span style={{ display: "flex", alignItems: "center", gap: 3 }}><Star size={12} /> {githubRepo.repository.stars}</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 3 }}><GitFork size={12} /> {githubRepo.repository.forks}</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 3 }}><AlertCircle size={12} /> {githubRepo.repository.openIssues} issues</span>
+              </>
+            )}
             <span>{githubRepo.repository.language}</span>
           </div>
 
@@ -212,15 +438,201 @@ function ModuleCard({ module }: { module: { name: string; impact: string; filesC
 }
 
 
+type ExploredPage = {
+  url: string; path: string; access: "public" | "private";
+  statusCode: number | null; title: string; loadTime: number | null; issues: string[];
+};
+
+type Exploration = {
+  login: { status: string; message: string; loginUrl: string | null; username: string | null };
+  counts: { public: number; private: number };
+  pages: ExploredPage[];
+};
+
+const LOGIN_STATUS_STYLE: Record<string, { color: string; icon: React.ComponentType<{ size?: number; color?: string }> }> = {
+  success: { color: "var(--accent-green)", icon: CheckCircle2 },
+  "not-provided": { color: "var(--accent-amber)", icon: Lock },
+  none: { color: "var(--text-muted)", icon: Globe },
+};
+
+function SiteExplorationCard({ exploration }: { exploration: Exploration }) {
+  const setLoginPrompt = useAppStore((s) => s.setLoginPrompt);
+  const [showAll, setShowAll] = useState(false);
+  const { login, counts, pages } = exploration;
+  const style = LOGIN_STATUS_STYLE[login.status] || { color: "var(--accent-red)", icon: AlertCircle };
+  const StatusIcon = style.icon;
+  // Logged-in pages first — they're what the test account was added for
+  const ordered = [...pages].sort((a, b) => Number(b.access === "private") - Number(a.access === "private"));
+  const visiblePages = showAll ? ordered : ordered.slice(0, 10);
+  const canAddLogin = login.status !== "none" && login.status !== "success";
+
+  return (
+    <div className="glass-card" style={{ padding: 24, marginBottom: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+        <h2 style={{ fontSize: 14, fontWeight: 600 }}>Pages Tested</h2>
+        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+          {counts.public} public{counts.private > 0 ? ` · ${counts.private} logged-in` : ""}
+        </span>
+      </div>
+
+      {/* Login status */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", marginBottom: 14,
+        borderRadius: 6, border: `1px solid ${style.color}`, fontSize: 12, color: "var(--text-secondary)",
+      }}>
+        <StatusIcon size={15} color={style.color} />
+        <span style={{ flex: 1 }}>{login.message}</span>
+        {canAddLogin && login.loginUrl && (
+          <button className="btn-primary" style={{ fontSize: 11, padding: "5px 10px" }}
+            onClick={() => setLoginPrompt({ loginUrl: login.loginUrl as string })}>
+            {login.status === "not-provided" ? "Add test account" : "Edit login"}
+          </button>
+        )}
+      </div>
+
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th style={{ width: 28 }}></th>
+            <th>Page</th>
+            <th style={{ width: 80 }}>Load</th>
+            <th>Issues</th>
+          </tr>
+        </thead>
+        <tbody>
+          {visiblePages.map((p) => (
+            <tr key={p.url}>
+              <td title={p.access === "private" ? "Behind login" : "Public"}>
+                {p.access === "private" ? <Lock size={13} color="var(--accent-amber)" /> : <Globe size={13} color="var(--text-muted)" />}
+              </td>
+              <td>
+                <a href={p.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--text-primary)", fontSize: 12 }}>{p.path}</a>
+                {p.title && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{p.title.slice(0, 70)}</div>}
+              </td>
+              <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                {p.loadTime != null ? `${(p.loadTime / 1000).toFixed(1)}s` : "—"}
+              </td>
+              <td style={{ fontSize: 12, color: p.issues.length ? "var(--accent-amber)" : "var(--accent-green)" }}>
+                {p.issues.length ? p.issues.join(" · ") : "No issues"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {pages.length > 10 && (
+        <button type="button" onClick={() => setShowAll(!showAll)}
+          style={{ background: "none", border: "none", padding: 0, marginTop: 10, fontSize: 12, color: "var(--accent-blue)", cursor: "pointer" }}>
+          {showAll ? "Show fewer" : `Show all ${pages.length} pages`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+
+type Delta = {
+  direction: "improved" | "worse" | "unchanged";
+  previousScore: number; currentScore: number;
+  previousDeployment?: string; currentDeployment?: string;
+  passedChange: number; improvedTests: string[]; regressionTests: string[];
+};
+
+const DELTA_STYLE = {
+  improved: { color: "var(--accent-green)", tint: "rgba(34 197 94 / 0.06)", title: "Risk improved", Icon: TrendingDown },
+  worse: { color: "var(--accent-red)", tint: "rgba(239 68 68 / 0.06)", title: "Risk increased", Icon: TrendingUp },
+  unchanged: { color: "var(--text-secondary)", tint: "transparent", title: "No change in risk", Icon: Minus },
+};
+
+function DeltaCard({ delta }: { delta: Delta }) {
+  const style = DELTA_STYLE[delta.direction] || DELTA_STYLE.unchanged;
+  const { Icon } = style;
+  const decisionChanged = delta.previousDeployment && delta.previousDeployment !== delta.currentDeployment;
+  const list = (items: string[]) => items.slice(0, 4).join(", ") + (items.length > 4 ? ` +${items.length - 4} more` : "");
+
+  return (
+    <div className="glass-card" style={{ padding: "16px 20px", marginBottom: 20, background: style.tint, border: `1px solid ${style.color}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20 }}>
+        <div style={{ minWidth: 0 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 600, color: style.color, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+            <Icon size={14} /> {style.title} since the last run
+            {decisionChanged && (
+              <span style={{ fontWeight: 400, color: "var(--text-secondary)" }}>
+                · deployment {delta.previousDeployment?.toUpperCase()} → {delta.currentDeployment?.toUpperCase()}
+              </span>
+            )}
+          </h3>
+          {delta.improvedTests.length > 0 && (
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 2 }}>
+              <span style={{ color: "var(--accent-green)" }}>Now passing ({delta.improvedTests.length}):</span> {list(delta.improvedTests)}
+            </div>
+          )}
+          {delta.regressionTests.length > 0 && (
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+              <span style={{ color: "var(--accent-red)" }}>Now failing ({delta.regressionTests.length}):</span> {list(delta.regressionTests)}
+            </div>
+          )}
+          {!delta.improvedTests.length && !delta.regressionTests.length && (
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Same checks passed and failed as last time.</div>
+          )}
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Risk score (lower is better)</div>
+          <div style={{ fontSize: 18, fontWeight: 700, display: "flex", alignItems: "baseline", gap: 8, justifyContent: "flex-end" }}>
+            <span style={{ color: "var(--text-muted)", fontSize: 14 }}>{delta.previousScore}</span>
+            <span style={{ color: "var(--text-muted)", fontSize: 14 }}>→</span>
+            <span style={{ color: style.color }}>{delta.currentScore}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 export default function DashboardPage() {
-  const { dashboard, dashboardLoading, loadDashboard, refreshDashboard } = useAppStore();
+  const { dashboard, dashboardLoading, dashboardError, loadDashboard, refreshDashboard, holdPipeline, loginPrompt, progress } = useAppStore();
 
   useEffect(() => {
-    // Only fetch if no data yet (prevents re-running AI pipeline on tab switches)
-    if (!dashboard && !dashboardLoading) {
+    // Only fetch if no data yet (prevents re-running AI pipeline on tab switches).
+    // After an error, wait for the user to retry instead of looping.
+    if (!dashboard && !dashboardLoading && !dashboardError) {
       loadDashboard();
     }
-  }, [dashboard, dashboardLoading, loadDashboard]);
+  }, [dashboard, dashboardLoading, dashboardError, loadDashboard]);
+
+  if (dashboardError && !dashboardLoading && !dashboard) {
+    return (
+      <div style={{ display: "flex" }}>
+        <Sidebar />
+        <main style={{ marginLeft: 220, padding: 24, flex: 1, width: "calc(100% - 220px)" }}>
+          <div className="glass-card" style={{ padding: 40, textAlign: "center", marginTop: 40 }}>
+            <AlertCircle size={24} color="var(--accent-red)" style={{ margin: "0 auto 12px" }} />
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Couldn&apos;t load the dashboard</div>
+            <p style={{ fontSize: 12, color: "var(--text-secondary)", maxWidth: 520, margin: "0 auto 16px" }}>{dashboardError}</p>
+            <button className="btn-primary" onClick={() => loadDashboard()} style={{ margin: "0 auto" }}>Try again</button>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // Before the first run: checking for a login page, or asking for a test account
+  if (!dashboard && !dashboardLoading && (holdPipeline || loginPrompt)) {
+    return (
+      <div style={{ display: "flex" }}>
+        <Sidebar />
+        <main style={{ marginLeft: 220, padding: 24, flex: 1, width: "calc(100% - 220px)" }}>
+          <div style={{ marginBottom: 20 }}>
+            <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 2 }}>Release Dashboard</h1>
+            <p style={{ color: "var(--text-muted)", fontSize: 12 }}>
+              {loginPrompt ? "One more step before testing" : "Checking your site…"}
+            </p>
+          </div>
+          <ProjectConfigPanel />
+        </main>
+      </div>
+    );
+  }
 
   if (dashboardLoading || !dashboard) {
     return (
@@ -233,8 +645,8 @@ export default function DashboardPage() {
           </div>
           <div style={{ padding: 40, textAlign: "center" }}>
             <Loader2 size={24} color="var(--text-muted)" className="animate-spin" style={{ margin: "0 auto 12px" }} />
-            <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>Crawling website and running tests...</div>
-            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>This may take 10-20 seconds</div>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{progress || "Crawling website and running tests..."}</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Testing up to 20 pages (plus logged-in pages) can take 1–2 minutes</div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginTop: 20 }}>
             {[1, 2, 3, 4].map(i => <div key={i} className="skeleton" style={{ height: 100 }} />)}
@@ -327,36 +739,8 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Delta Card (Feature 2) */}
-        {dashboard.delta?.hasDelta && (
-          <div className="glass-card animated-pulse" style={{ padding: "16px 20px", marginBottom: 20, background: "rgba(59, 130, 246, 0.05)", border: "1px solid rgba(59, 130, 246, 0.2)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <h3 style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-blue)", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
-                  <TrendingDown size={14} /> Risk Improved
-                </h3>
-                <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-                  Compared to the previous run before fixes
-                </div>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Risk Score</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, display: "flex", alignItems: "baseline", gap: 8 }}>
-                    <span style={{ color: "var(--text-muted)", textDecoration: "line-through", fontSize: 14 }}>{dashboard.delta.previousScore}</span>
-                    <span style={{ color: "var(--accent-green)" }}>{dashboard.delta.currentScore}</span>
-                  </div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Tests Passed</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: dashboard.delta.passedChange > 0 ? "var(--status-green)" : "var(--text-primary)" }}>
-                    {dashboard.delta.passedChange > 0 ? "+" : ""}{dashboard.delta.passedChange}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Change since the previous run */}
+        {dashboard.delta?.hasDelta && <DeltaCard delta={dashboard.delta} />}
 
         <ProjectConfigPanel />
 
@@ -375,7 +759,11 @@ export default function DashboardPage() {
               <div style={{ fontWeight: 600, fontSize: 14 }}>
                 Deployment {riskOverview.deployment === "blocked" ? "BLOCKED" : "APPROVED"}
               </div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>CI/CD Gatekeeper Decision</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                {riskOverview.deployment === "blocked" && riskOverview.reasons?.length
+                  ? riskOverview.reasons.join(" · ")
+                  : "No release blockers found"}
+              </div>
             </div>
           </div>
           <span className={`badge badge-${riskOverview.deployment === "blocked" ? "blocked" : "approved"}`}>
@@ -390,6 +778,8 @@ export default function DashboardPage() {
           <StatsCard icon={XCircle} label="Tests Failed" value={testMetrics.byStatus.failed} color="var(--accent-red)" />
           <StatsCard icon={Zap} label="Pass Rate" value={`${passRate}%`} sub={dashboard.pipelineDuration ? `Pipeline: ${dashboard.pipelineDuration}` : ""} color={passRate >= 80 ? "var(--accent-green)" : passRate >= 60 ? "var(--accent-amber)" : "var(--accent-red)"} />
         </div>
+
+        {dashboard.exploration && <SiteExplorationCard exploration={dashboard.exploration} />}
 
         {/* Risk + Modules */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
@@ -413,7 +803,8 @@ export default function DashboardPage() {
 
         {/* Risk Factors */}
         <div className="glass-card" style={{ padding: 24, marginBottom: 24 }}>
-          <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>Risk Factor Breakdown</h2>
+          <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Risk Factor Breakdown</h2>
+          <p style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 14 }}>{riskOverview.formula}</p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
             {riskOverview.factors?.map((factor: { name: string; score: number; description: string; weight: number }, i: number) => (
               <div key={i} className="stat-card">

@@ -6,6 +6,7 @@
  */
 
 const cheerio = require('cheerio');
+const { assertPublicUrl, normalizeUrl } = require('./urlGuard');
 
 const CRAWL_TIMEOUT = 15000; // 15s
 const USER_AGENT = 'AI-Tester-Agent/1.0 (Autonomous Release Intelligence)';
@@ -19,19 +20,31 @@ async function crawlWebsite(url) {
   const startTime = Date.now();
 
   // Normalize URL
-  if (!url.startsWith('http')) url = 'https://' + url;
+  url = normalizeUrl(url);
 
   let response, html, statusCode, responseTime, headers;
+  let finalUrl = url;
 
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), CRAWL_TIMEOUT);
 
-    response = await fetch(url, {
-      headers: { 'User-Agent': USER_AGENT, 'Accept': 'text/html,application/xhtml+xml' },
-      signal: controller.signal,
-      redirect: 'follow',
-    });
+    // Follow redirects manually so every hop is checked against private
+    // addresses (a public site must not be able to redirect us internally)
+    let target = url;
+    for (let hop = 0; ; hop++) {
+      await assertPublicUrl(target);
+      response = await fetch(target, {
+        headers: { 'User-Agent': USER_AGENT, 'Accept': 'text/html,application/xhtml+xml' },
+        signal: controller.signal,
+        redirect: 'manual',
+      });
+      const location = response.headers.get('location');
+      if (response.status < 300 || response.status >= 400 || !location) break;
+      if (hop >= 5) throw new Error('Too many redirects');
+      target = new URL(location, target).toString();
+    }
+    finalUrl = target;
 
     clearTimeout(timeout);
     responseTime = Date.now() - startTime;
@@ -49,7 +62,26 @@ async function crawlWebsite(url) {
     };
   }
 
+  return analyzeHtml(url, html, { statusCode, responseTime, headers, finalUrl });
+}
+
+/**
+ * Parse a page's HTML into the structured site analysis. Shared by the HTTP
+ * crawler and the logged-in browser crawler (which supplies rendered HTML).
+ */
+function analyzeHtml(url, html, { statusCode = 200, responseTime = 0, headers = {}, finalUrl = url } = {}) {
   const $ = cheerio.load(html);
+
+  // ── Login signals (used by the login detector) ──────────────────────────
+  const passwordFields = $('input[type="password"]').length;
+  const loginLinks = [];
+  $('a[href]').each((_, el) => {
+    const text = $(el).text().trim();
+    const href = $(el).attr('href') || '';
+    if (/^(log\s?in|sign\s?in|member login|my account)$/i.test(text) || /(^|\/)(log-?in|sign-?in|signin)(\/|$|\?)/i.test(href)) {
+      try { loginLinks.push(new URL(href, finalUrl).href); } catch { /* ignore bad href */ }
+    }
+  });
 
   // ── Extract Title ──────────────────────────────────────────────────────
   const title = $('title').text().trim();
@@ -270,6 +302,9 @@ async function crawlWebsite(url) {
 
   return {
     url,
+    finalUrl,
+    passwordFields,
+    loginLinks: [...new Set(loginLinks)].slice(0, 5),
     success: true,
     statusCode,
     responseTime,
@@ -372,4 +407,4 @@ async function checkLinks(links, concurrency = 5) {
   return results;
 }
 
-module.exports = { crawlWebsite, checkLink, checkLinks };
+module.exports = { crawlWebsite, analyzeHtml, checkLinks };

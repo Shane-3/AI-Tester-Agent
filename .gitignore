@@ -47,15 +47,13 @@ next-env.d.ts
 # Testing
 coverage/
 
-# Prisma
-prisma/*.db
-prisma/migrations/
-
 # Misc
 *.pem
 .vercel
 service-account*.json
-risk-history.json
+
+# Private hosting notes
+DEPLOYMENT.md
 
 # AI tool files
 AGENTS.md

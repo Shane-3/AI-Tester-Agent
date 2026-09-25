@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import ServerStatus from "@/components/ServerStatus";
 
 export const metadata: Metadata = {
   title: "AI Tester Agent — Autonomous Release Intelligence",
@@ -23,6 +24,7 @@ export default function RootLayout({
         />
       </head>
       <body style={{ fontFamily: "'Inter', sans-serif" }}>
+        <ServerStatus />
         {children}
       </body>
     </html>

@@ -21,7 +21,7 @@ function generateCollection(url, siteAnalysis) {
     name: 'Homepage — GET',
     request: {
       method: 'GET',
-      url: { raw: url, protocol: url.startsWith('https') ? 'https' : 'http', host: [new URL(url).host], path: ['/'] },
+      url: url,
       header: [{ key: 'User-Agent', value: 'AI-Tester-Agent/1.0 Newman' }],
     },
     event: [{
@@ -41,7 +41,7 @@ function generateCollection(url, siteAnalysis) {
     name: 'Homepage — HEAD',
     request: {
       method: 'HEAD',
-      url: { raw: url },
+      url: url,
       header: [{ key: 'User-Agent', value: 'AI-Tester-Agent/1.0 Newman' }],
     },
     event: [{
@@ -60,7 +60,7 @@ function generateCollection(url, siteAnalysis) {
     name: 'Security Headers',
     request: {
       method: 'GET',
-      url: { raw: url },
+      url: url,
       header: [{ key: 'User-Agent', value: 'AI-Tester-Agent/1.0 Newman' }],
     },
     event: [{
@@ -87,7 +87,7 @@ function generateCollection(url, siteAnalysis) {
       name: `Internal Link ${i + 1} — ${new URL(link, url).pathname}`,
       request: {
         method: 'GET',
-        url: { raw: link },
+        url: link,
         header: [{ key: 'User-Agent', value: 'AI-Tester-Agent/1.0 Newman' }],
       },
       event: [{
@@ -112,7 +112,7 @@ function generateCollection(url, siteAnalysis) {
         name: `Form Endpoint ${i + 1} — ${form.method || 'GET'} ${form.action}`,
         request: {
           method: form.method || 'GET',
-          url: { raw: formUrl },
+          url: formUrl,
           header: [{ key: 'User-Agent', value: 'AI-Tester-Agent/1.0 Newman' }],
         },
         event: [{
@@ -133,7 +133,7 @@ function generateCollection(url, siteAnalysis) {
     name: 'Favicon',
     request: {
       method: 'GET',
-      url: { raw: `${new URL(url).origin}/favicon.ico` },
+      url: `${new URL(url).origin}/favicon.ico`,
     },
     event: [{
       listen: 'test',
@@ -150,7 +150,7 @@ function generateCollection(url, siteAnalysis) {
     name: 'Robots.txt',
     request: {
       method: 'GET',
-      url: { raw: `${new URL(url).origin}/robots.txt` },
+      url: `${new URL(url).origin}/robots.txt`,
     },
     event: [{
       listen: 'test',
@@ -240,7 +240,7 @@ async function runNewmanTests(url, siteAnalysis) {
           title: 'Newman — Overall API Health',
           passed: (run.stats?.assertions?.failed || 0) === 0,
           expected: 'All API assertions pass',
-          actual: `${run.stats?.assertions?.total || 0} assertions: ${run.stats?.assertions?.pending || 0} passed, ${run.stats?.assertions?.failed || 0} failed`,
+          actual: `${run.stats?.assertions?.total || 0} assertions: ${(run.stats?.assertions?.total || 0) - (run.stats?.assertions?.failed || 0)} passed, ${run.stats?.assertions?.failed || 0} failed`,
           explanation: (run.stats?.assertions?.failed || 0) === 0
             ? `All ${run.stats?.assertions?.total || 0} Newman assertions passed across ${run.stats?.requests?.total || 0} requests.`
             : `${run.stats?.assertions?.failed || 0} of ${run.stats?.assertions?.total || 0} assertions failed across ${run.stats?.requests?.total || 0} API requests.`,
@@ -262,4 +262,4 @@ async function runNewmanTests(url, siteAnalysis) {
   });
 }
 
-module.exports = { runNewmanTests, generateCollection };
+module.exports = { runNewmanTests };

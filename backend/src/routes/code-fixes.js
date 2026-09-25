@@ -3,31 +3,33 @@
  * 
  * POST /api/code-fixes
  * Fetches repo source code via GitHub API, analyzes it against test failures,
- * and returns specific line-level fix suggestions powered by Gemini.
+ * and returns specific line-level fix suggestions powered by the configured AI model.
  */
 
 const express = require('express');
 const router = express.Router();
 const { parseGitHubUrl, fetchRepoTree, selectRelevantFiles, fetchFileContents } = require('../services/codeAnalyzer');
-const { analyzeCodeFixes } = require('../services/geminiAgent');
-const { getProjectContext, getCachedGitHubData } = require('../services/aiSimulator');
+const { analyzeCodeFixes } = require('../services/aiAgent');
+const { getProjectContext } = require('../services/projectContext');
 const { crawlWebsite } = require('../services/websiteCrawler');
 const { runTests, summarizeResults } = require('../services/testRunner');
+const { getSession } = require('../services/sessionStore');
+const { computeRisk } = require('../services/riskEngine');
+const { RepoAccessError } = require('../services/githubClient');
 
-// Cache code fixes to avoid re-analyzing
-let fixesCache = null;
-let fixesCacheTime = 0;
+// Cache code fixes per user session to avoid re-analyzing
 const FIXES_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 router.post('/code-fixes', async (req, res) => {
   try {
+    const S = getSession();
     const forceRefresh = req.body.refresh === true;
     const now = Date.now();
 
     // Return cached fixes if fresh
-    if (!forceRefresh && fixesCache && (now - fixesCacheTime) < FIXES_CACHE_TTL) {
+    if (!forceRefresh && S.fixesCache && (now - S.fixesCacheTime) < FIXES_CACHE_TTL) {
       console.log('[CodeFixes] Returning cached results');
-      return res.json(fixesCache);
+      return res.json(S.fixesCache);
     }
 
     const ctx = getProjectContext();
@@ -69,18 +71,14 @@ router.post('/code-fixes', async (req, res) => {
     const filePaths = relevantFiles.map(f => f.path);
     const fileContents = await fetchFileContents(owner, repo, filePaths);
 
-    // Step 5: Analyze with Gemini
+    // Step 5: Analyze with AI
     console.log('[CodeFixes] Step 5: Analyzing with AI...');
     const { fixes, source } = await analyzeCodeFixes(fileContents, testResults, siteAnalysis);
 
     const pipelineMs = Date.now() - pipelineStart;
 
-    // Calculate current risk score from test failures weighted by priority
-    // (aligned with the dashboard's calculateRiskRuleBased formula)
-    const priorityWeights = { critical: 4, high: 3, medium: 2, low: 1 };
-    const maxPossibleRisk = testResults.reduce((sum, t) => sum + (priorityWeights[t.priority] || 2), 0);
-    const currentRiskPoints = failedTests.reduce((sum, t) => sum + (priorityWeights[t.priority] || 2), 0);
-    const currentRiskScore = Math.min(100, Math.round((currentRiskPoints / Math.max(maxPossibleRisk, 1)) * 100));
+    // Same risk formula as the Dashboard and Insights
+    const currentRiskScore = computeRisk(testResults).riskScore;
 
     // Distribute the ENTIRE current risk across all fixes proportionally
     // based on severity weight. Applying all fixes → 0% risk (fully scalable).
@@ -154,14 +152,14 @@ router.post('/code-fixes', async (req, res) => {
     };
 
     // Cache the results
-    fixesCache = responseData;
-    fixesCacheTime = Date.now();
+    S.fixesCache = responseData;
+    S.fixesCacheTime = Date.now();
     console.log(`[CodeFixes] Complete in ${pipelineMs}ms — ${fixes?.length || 0} fixes found (${source})`);
 
     res.json(responseData);
   } catch (error) {
-    console.error('[CodeFixes] Error:', error);
-    res.status(500).json({
+    console.error('[CodeFixes] Error:', error.message);
+    res.status(error instanceof RepoAccessError ? error.status : 500).json({
       error: 'Code analysis failed',
       message: error.message,
       fixes: [],

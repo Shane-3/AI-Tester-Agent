@@ -5,14 +5,11 @@
  * 1. Sprint Velocity Improvement — time saved vs manual testing
  * 2. Risk Score Accuracy — prediction correctness over time
  * 
- * Data persisted to JSON files across restarts.
+ * Data is kept per user session (in memory), so each user of a hosted
+ * instance sees only their own runs and predictions.
  */
 
-const fs = require('fs');
-const path = require('path');
-
-const METRICS_FILE = path.join(__dirname, '..', '..', 'sprint-metrics.json');
-const PREDICTIONS_FILE = path.join(__dirname, '..', '..', 'prediction-history.json');
+const { getSession } = require('./sessionStore');
 
 
 // Realistic manual QA estimates (minutes per test to manually execute + verify).
@@ -28,22 +25,13 @@ const MANUAL_MINUTES = {
 
 
 function loadSprintMetrics() {
-  try {
-    if (fs.existsSync(METRICS_FILE)) {
-      return JSON.parse(fs.readFileSync(METRICS_FILE, 'utf-8'));
-    }
-  } catch (err) {
-    console.warn('[Metrics] Could not load sprint metrics:', err.message);
-  }
-  return { runs: [] };
+  const S = getSession();
+  if (!S.sprintMetrics) S.sprintMetrics = { runs: [] };
+  return S.sprintMetrics;
 }
 
 function saveSprintMetrics(data) {
-  try {
-    fs.writeFileSync(METRICS_FILE, JSON.stringify(data, null, 2));
-  } catch (err) {
-    console.warn('[Metrics] Could not save sprint metrics:', err.message);
-  }
+  getSession().sprintMetrics = data;
 }/**
  * Calculate sprint velocity improvement for a pipeline run
  * @param {object} params
@@ -132,23 +120,14 @@ function getSprintVelocityHistory() {
 
 
 function loadPredictionHistory() {
-  try {
-    if (fs.existsSync(PREDICTIONS_FILE)) {
-      return JSON.parse(fs.readFileSync(PREDICTIONS_FILE, 'utf-8'));
-    }
-  } catch (err) {
-    console.warn('[Metrics] Could not load prediction history:', err.message);
-  }
-  // Seed with demo data for hackathon
-  return seedPredictionHistory();
+  const S = getSession();
+  // Seed with demo data so the accuracy panel isn't empty on first visit
+  if (!S.predictionHistory) return seedPredictionHistory();
+  return S.predictionHistory;
 }
 
 function savePredictionHistory(data) {
-  try {
-    fs.writeFileSync(PREDICTIONS_FILE, JSON.stringify(data, null, 2));
-  } catch (err) {
-    console.warn('[Metrics] Could not save prediction history:', err.message);
-  }
+  getSession().predictionHistory = data;
 }
 
 /**
@@ -336,9 +315,7 @@ function formatDuration(ms) {
 
 module.exports = {
   calculateSprintVelocity,
-  getSprintVelocityHistory,
   recordPrediction,
   submitFeedback,
-  calculateAccuracy,
   getMetrics,
 };

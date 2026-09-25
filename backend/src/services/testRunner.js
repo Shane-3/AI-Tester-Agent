@@ -9,16 +9,14 @@ const { checkLinks } = require('./websiteCrawler');
 
 // Both Dashboard and Test Studio routes share this cache so that navigating
 // to Test Studio after Dashboard doesn't re-run the entire pipeline.
-let _testResultsCache = null;
-let _testCacheTime = 0;
+const { getSession } = require('./sessionStore');
 const TEST_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Store test results in the shared cache (called by dashboard after pipeline runs)
  */
 function cacheTestResults(url, siteAnalysis, testResults, summary) {
-  _testResultsCache = { url, siteAnalysis, testResults, summary, cachedAt: Date.now() };
-  _testCacheTime = Date.now();
+  getSession().testResultsCache = { url, siteAnalysis, testResults, summary, cachedAt: Date.now() };
   console.log(`[TestRunner] Cached ${testResults.length} test results for ${url}`);
 }
 
@@ -27,8 +25,9 @@ function cacheTestResults(url, siteAnalysis, testResults, summary) {
  * @returns {object|null} - { url, siteAnalysis, testResults, summary } or null
  */
 function getCachedTestResults() {
-  if (_testResultsCache && (Date.now() - _testCacheTime) < TEST_CACHE_TTL) {
-    return _testResultsCache;
+  const cache = getSession().testResultsCache;
+  if (cache && (Date.now() - cache.cachedAt) < TEST_CACHE_TTL) {
+    return cache;
   }
   return null;
 }
@@ -37,8 +36,7 @@ function getCachedTestResults() {
  * Invalidate the shared test cache (called when project config changes)
  */
 function invalidateTestCache() {
-  _testResultsCache = null;
-  _testCacheTime = 0;
+  getSession().testResultsCache = null;
 }
 
 /**

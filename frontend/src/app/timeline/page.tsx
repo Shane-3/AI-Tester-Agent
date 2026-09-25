@@ -46,13 +46,13 @@ function formatTotalDuration(ms: number): string {
 }
 
 export default function TimelinePage() {
-  const { dashboard, dashboardLoading, loadDashboard, projectConfig, loadProjectInfo } = useAppStore();
+  const { dashboard, dashboardLoading, dashboardError, loadDashboard, projectConfig, loadProjectInfo } = useAppStore();
   const [expanded, setExpanded] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!dashboard) loadDashboard();
+    if (!dashboard && !dashboardLoading && !dashboardError) loadDashboard();
     if (!projectConfig) loadProjectInfo();
-  }, [dashboard, loadDashboard, projectConfig, loadProjectInfo]);
+  }, [dashboard, dashboardLoading, dashboardError, loadDashboard, projectConfig, loadProjectInfo]);
 
   const timeline: AgentActivity[] = dashboard?.agentTimeline || [];
   const completedCount = timeline.filter(a => a.status === "completed").length;
@@ -93,7 +93,8 @@ export default function TimelinePage() {
           </div>
         ) : timeline.length === 0 ? (
           <div className="glass-card" style={{ padding: 40, textAlign: "center" }}>
-            <div style={{ fontSize: 13, marginBottom: 12 }}>No agent activity</div>
+            <div style={{ fontSize: 13, marginBottom: dashboardError ? 6 : 12 }}>No agent activity</div>
+            {dashboardError && <div style={{ fontSize: 12, color: "var(--accent-red)", marginBottom: 12 }}>{dashboardError}</div>}
             <button className="btn-primary" onClick={() => loadDashboard()}>
               <RefreshCw size={13} /> Load
             </button>

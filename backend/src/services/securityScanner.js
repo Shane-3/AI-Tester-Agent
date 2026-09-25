@@ -18,6 +18,7 @@
  */
 
 const https = require('https');
+const tls = require('tls');
 const http = require('http');
 const { URL } = require('url');
 
@@ -59,42 +60,42 @@ function fetchWithDetails(url, options = {}) {
 }
 
 /**
- * Get SSL/TLS certificate details
+ * Get SSL/TLS certificate details.
+ * Uses a fresh TLS handshake every time — a pooled/resumed HTTPS connection
+ * doesn't expose the certificate, which made this check fail on re-runs.
  */
 function getCertificateDetails(url) {
   return new Promise((resolve) => {
+    let parsed;
     try {
-      const parsed = new URL(url);
-      if (parsed.protocol !== 'https:') {
-        resolve(null);
-        return;
-      }
-
-      const req = https.request({
-        hostname: parsed.hostname,
-        port: parsed.port || 443,
-        method: 'HEAD',
-        rejectUnauthorized: false,
-        timeout: 8000,
-      }, (res) => {
-        const cert = res.socket.getPeerCertificate();
-        resolve(cert && cert.subject ? {
-          subject: cert.subject,
-          issuer: cert.issuer,
-          valid_from: cert.valid_from,
-          valid_to: cert.valid_to,
-          fingerprint: cert.fingerprint,
-          serialNumber: cert.serialNumber,
-          authorized: res.socket.authorized,
-        } : null);
-        res.resume();
-      });
-      req.on('error', () => resolve(null));
-      req.on('timeout', () => { req.destroy(); resolve(null); });
-      req.end();
+      parsed = new URL(url);
     } catch {
-      resolve(null);
+      return resolve(null);
     }
+    if (parsed.protocol !== 'https:') return resolve(null);
+
+    const socket = tls.connect({
+      host: parsed.hostname,
+      port: parseInt(parsed.port, 10) || 443,
+      servername: parsed.hostname,
+      rejectUnauthorized: false, // inspect bad certificates too
+      timeout: 8000,
+    }, () => {
+      const cert = socket.getPeerCertificate();
+      resolve(cert && cert.subject ? {
+        subject: cert.subject,
+        issuer: cert.issuer,
+        valid_from: cert.valid_from,
+        valid_to: cert.valid_to,
+        fingerprint: cert.fingerprint,
+        serialNumber: cert.serialNumber,
+        authorized: socket.authorized,
+        authorizationError: socket.authorizationError || null,
+      } : null);
+      socket.end();
+    });
+    socket.on('error', () => resolve(null));
+    socket.on('timeout', () => { socket.destroy(); resolve(null); });
   });
 }
 

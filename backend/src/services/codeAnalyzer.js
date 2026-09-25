@@ -1,54 +1,35 @@
 /**
  * Code Analyzer Service
  * 
- * Fetches repository file tree and contents via GitHub API,
+ * Reads repository file tree and contents from a cached archive snapshot,
  * intelligently selects relevant files based on test failures or user questions,
  * and prepares them for AI analysis.
  */
 
-const GITHUB_API = 'https://api.github.com';
-
-function getHeaders() {
-  const headers = {
-    'Accept': 'application/vnd.github.v3+json',
-    'User-Agent': 'AI-Tester-Agent/1.0',
-  };
-  if (process.env.GITHUB_TOKEN) {
-    headers['Authorization'] = `Bearer ${process.env.GITHUB_TOKEN}`;
-  }
-  return headers;
-}
+const { getRepoSnapshot } = require('./githubClient');
 
 /**
- * Parse a GitHub URL into owner and repo
+ * Parse a GitHub URL into owner and repo.
+ * Accepts https://github.com/owner/repo(.git)(/tree/...), git@github.com:owner/repo.git, or owner/repo.
  */
 function parseGitHubUrl(url) {
-  const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
+  if (!url || typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  const match = trimmed.match(/github\.com[/:]([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)/)
+    || trimmed.match(/^([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)$/);
   if (!match) return null;
-  return { owner: match[1], repo: match[2].replace(/\.git$/, '') };
+  const repo = match[2].replace(/\.git$/, '');
+  if (!repo || repo === '.' || repo === '..') return null;
+  return { owner: match[1], repo };
 }
 
 /**
- * Fetch the full file tree of a repository
+ * Fetch the full file tree of a repository (from the cached archive snapshot —
+ * no GitHub API calls, so no token or rate limit involved for public repos).
  */
-async function fetchRepoTree(owner, repo, branch = 'main') {
-  // Try specified branch first, then fallback to 'master'
-  for (const b of [branch, 'master']) {
-    try {
-      const res = await fetch(
-        `${GITHUB_API}/repos/${owner}/${repo}/git/trees/${b}?recursive=1`,
-        { headers: getHeaders() }
-      );
-      if (res.ok) {
-        const data = await res.json();
-        console.log(`[CodeAnalyzer] Fetched tree for ${owner}/${repo} (${b}): ${data.tree?.length || 0} items`);
-        return { tree: data.tree || [], branch: b };
-      }
-    } catch (err) {
-      // try next branch
-    }
-  }
-  throw new Error(`Could not fetch repository tree for ${owner}/${repo}`);
+async function fetchRepoTree(owner, repo) {
+  const snapshot = await getRepoSnapshot(owner, repo);
+  return { tree: snapshot.tree, branch: 'default' };
 }
 
 
@@ -241,50 +222,31 @@ function selectFilesForQuestion(tree, question) {
 }
 
 /**
- * Fetch contents of multiple files from GitHub
+ * Get contents of multiple files from the repo snapshot
  */
 async function fetchFileContents(owner, repo, filePaths) {
-  const headers = getHeaders();
-  const results = [];
   const MAX_FILE_SIZE = 15000; // ~500 lines, keep under token limit
+  const { files } = await getRepoSnapshot(owner, repo);
+  const results = [];
 
-  // Fetch in batches of 3 to avoid rate limits
-  for (let i = 0; i < filePaths.length; i += 3) {
-    const batch = filePaths.slice(i, i + 3);
-    const promises = batch.map(async (filePath) => {
-      try {
-        const res = await fetch(
-          `${GITHUB_API}/repos/${owner}/${repo}/contents/${filePath}`,
-          { headers }
-        );
-        if (!res.ok) return null;
-        const data = await res.json();
-
-        // Decode base64 content
-        if (data.content && data.encoding === 'base64') {
-          let content = Buffer.from(data.content, 'base64').toString('utf-8');
-          // Truncate very large files
-          if (content.length > MAX_FILE_SIZE) {
-            content = content.substring(0, MAX_FILE_SIZE) + '\n\n... [truncated — file too large]';
-          }
-          return { path: filePath, content, size: data.size };
-        }
-        return null;
-      } catch (err) {
-        console.error(`[CodeAnalyzer] Failed to fetch ${filePath}:`, err.message);
-        return null;
-      }
-    });
-    const batchResults = await Promise.all(promises);
-    results.push(...batchResults.filter(Boolean));
+  for (const filePath of filePaths) {
+    let content = files.get(filePath);
+    if (content == null) continue;
+    const size = Buffer.byteLength(content);
+    // Truncate very large files
+    if (content.length > MAX_FILE_SIZE) {
+      content = content.substring(0, MAX_FILE_SIZE) + '\n\n... [truncated — file too large]';
+    }
+    results.push({ path: filePath, content, size });
   }
 
-  console.log(`[CodeAnalyzer] Fetched ${results.length}/${filePaths.length} files`);
+  console.log(`[CodeAnalyzer] Loaded ${results.length}/${filePaths.length} files`);
   return results;
 }
 
 module.exports = {
   parseGitHubUrl,
+  shouldIncludeFile,
   fetchRepoTree,
   selectRelevantFiles,
   selectFilesForQuestion,

@@ -7,8 +7,6 @@
 import { create } from 'zustand';
 import {
   fetchDashboardData,
-  analyzeRequirements,
-  analyzeCommit,
   generateTests,
   predictRisk,
   configureProject,
@@ -18,21 +16,39 @@ import {
   askCodeQuestion,
   fetchMetrics,
   submitDeploymentFeedback,
+  fetchHealth,
+  getSavedProject,
+  fetchProgress,
 } from './api';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyData = any;
 
 interface AppState {
+  // Server status (free hosting may sleep when idle)
+  serverStatus: 'checking' | 'waking' | 'online' | 'offline';
+  aiInfo: { mode: string; label: string; provider: string | null; fallbacks?: string[]; models?: string[] } | null;
+  checkServer: () => Promise<void>;
+
   // Project config
   projectConfig: AnyData | null;
-  configureProject: (data: { name?: string; websiteUrl?: string; repoUrl?: string }) => Promise<void>;
+  projectError: string | null;
+  configureProject: (data: { name?: string; websiteUrl?: string; repoUrl?: string }) => Promise<boolean>;
   loadProjectInfo: () => Promise<void>;
 
   // GitHub repo
   githubRepo: AnyData | null;
   githubLoading: boolean;
+  githubError: string | null;
   fetchGitHubRepo: (url?: string) => Promise<void>;
+
+  // Login detection flow: while held, nothing starts the test pipeline
+  holdPipeline: boolean;
+  setHoldPipeline: (hold: boolean) => void;
+  loginPrompt: { loginUrl: string; how?: string } | null;
+  setLoginPrompt: (prompt: { loginUrl: string; how?: string } | null) => void;
+  // What the running pipeline is doing ("Crawling public pages (7/20)…")
+  progress: string | null;
 
   // Dashboard data
   dashboard: AnyData | null;
@@ -54,37 +70,70 @@ interface AppState {
   // Test generation
   generatedTests: AnyData | null;
   testsLoading: boolean;
-  runTestGeneration: (projectId?: string, refresh?: boolean) => Promise<void>;
+  testsError: string | null;
+  runTestGeneration: (refresh?: boolean) => Promise<void>;
 
   // Risk prediction
   riskReport: AnyData | null;
   riskLoading: boolean;
-  runRiskPrediction: (projectId?: string) => Promise<void>;
-
-  // Requirement analysis
-  requirementAnalysis: AnyData | null;
-  requirementLoading: boolean;
-  runRequirementAnalysis: (stories: Array<{ title: string; description: string }>) => Promise<void>;
-
-  // Commit analysis
-  commitAnalysis: AnyData | null;
-  commitLoading: boolean;
-  runCommitAnalysis: (commits: Array<{ sha: string; message: string }>) => Promise<void>;
-
-  // Active tab
-  activeTab: string;
-  setActiveTab: (tab: string) => void;
+  riskError: string | null;
+  runRiskPrediction: () => Promise<void>;
 
   // Metrics
   metrics: AnyData | null;
-  metricsLoading: boolean;
   loadMetrics: () => Promise<void>;
   submitFeedback: (predictionId: string, outcome: 'smooth' | 'minor' | 'major') => Promise<AnyData | null>;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+let serverCheck: Promise<void> | null = null;
+
+type SetState = (partial: Partial<AppState>) => void;
+
+/** Polls the backend for pipeline progress until the returned stop() is called. */
+function pollProgress(set: SetState) {
+  const id = setInterval(async () => {
+    try {
+      const { progress } = await fetchProgress();
+      set({ progress: progress?.message || null });
+    } catch {
+      // ignore — progress is best-effort
+    }
+  }, 2000);
+  return () => {
+    clearInterval(id);
+    set({ progress: null });
+  };
+}
+
+export const useAppStore = create<AppState>((set, get) => ({
+  serverStatus: 'checking',
+  aiInfo: null,
+  checkServer: () => {
+    // Share one check across all components that call this on mount
+    if (serverCheck) return serverCheck;
+    serverCheck = (async () => {
+      const started = Date.now();
+      // Free instances can take ~30-60s to wake; retry for up to 90s
+      while (Date.now() - started < 90_000) {
+        try {
+          const health: AnyData = await fetchHealth();
+          set({ serverStatus: 'online', aiInfo: health.ai || null });
+          return;
+        } catch {
+          set({ serverStatus: 'waking' });
+          await new Promise((r) => setTimeout(r, 4000));
+        }
+      }
+      set({ serverStatus: 'offline' });
+      serverCheck = null; // allow a manual retry
+    })();
+    return serverCheck;
+  },
+
   projectConfig: null,
+  projectError: null,
   configureProject: async (data) => {
+    set({ projectError: null });
     try {
       const result: AnyData = await configureProject(data);
       // Clear ALL cached page data so pages re-fetch with new project context
@@ -92,42 +141,66 @@ export const useAppStore = create<AppState>((set) => ({
         projectConfig: result.project,
         generatedTests: null,
         riskReport: null,
-        requirementAnalysis: null,
-        commitAnalysis: null,
+        testsError: null,
+        riskError: null,
+        dashboardError: null,
         dashboard: null,
         codeFixes: null,
         chatHistory: [],
+        githubRepo: null,
+        githubError: null,
       });
-    } catch {
-      // silent fail
+      return true;
+    } catch (error) {
+      set({ projectError: error instanceof Error ? error.message : 'Failed to save project settings' });
+      return false;
     }
   },
   loadProjectInfo: async () => {
     try {
+      // (api.ts restores the browser-saved project first if the server lost it)
       const result: AnyData = await fetchProjectInfo();
       set({ projectConfig: result.project });
+      if (result.project?.repoUrl && !get().githubRepo && !get().githubLoading && !get().githubError) {
+        get().fetchGitHubRepo(result.project.repoUrl);
+      }
     } catch {
-      // silent fail
+      // Server unreachable — show saved settings so the form isn't empty
+      const saved = getSavedProject();
+      if (saved) set({ projectConfig: saved });
     }
   },
 
   githubRepo: null,
   githubLoading: false,
+  githubError: null,
   fetchGitHubRepo: async (url) => {
-    set({ githubLoading: true });
+    set({ githubLoading: true, githubError: null });
     try {
       const data = await fetchGitHubRepo(url);
       set({ githubRepo: data, githubLoading: false });
-    } catch {
-      set({ githubLoading: false });
+    } catch (error) {
+      set({
+        githubRepo: null,
+        githubLoading: false,
+        githubError: error instanceof Error ? error.message : 'Failed to load repository',
+      });
     }
   },
+
+  holdPipeline: false,
+  setHoldPipeline: (hold) => set({ holdPipeline: hold }),
+  loginPrompt: null,
+  setLoginPrompt: (prompt) => set({ loginPrompt: prompt }),
+  progress: null,
 
   dashboard: null,
   dashboardLoading: false,
   dashboardError: null,
   loadDashboard: async () => {
+    if (get().holdPipeline || get().loginPrompt) return; // waiting on the login question
     set({ dashboardLoading: true, dashboardError: null });
+    const stop = pollProgress(set);
     try {
       const data = await fetchDashboardData();
       set({ dashboard: data, dashboardLoading: false });
@@ -136,10 +209,13 @@ export const useAppStore = create<AppState>((set) => ({
         dashboardError: error instanceof Error ? error.message : 'Failed to load dashboard',
         dashboardLoading: false,
       });
+    } finally {
+      stop();
     }
   },
   refreshDashboard: async () => {
     set({ dashboardLoading: true, dashboardError: null });
+    const stop = pollProgress(set);
     try {
       const data = await fetchDashboardData(true); // pass refresh=true
       set({ dashboard: data, dashboardLoading: false });
@@ -148,59 +224,40 @@ export const useAppStore = create<AppState>((set) => ({
         dashboardError: error instanceof Error ? error.message : 'Failed to refresh dashboard',
         dashboardLoading: false,
       });
+    } finally {
+      stop();
     }
   },
 
   generatedTests: null,
   testsLoading: false,
-  runTestGeneration: async (projectId = 'demo', refresh = false) => {
-    set({ testsLoading: true });
+  testsError: null,
+  runTestGeneration: async (refresh = false) => {
+    if (get().holdPipeline || get().loginPrompt) return;
+    set({ testsLoading: true, testsError: null });
+    const stop = pollProgress(set);
     try {
-      const data = await generateTests(projectId, undefined, refresh);
+      const data = await generateTests(refresh);
       set({ generatedTests: data, testsLoading: false });
-    } catch {
-      set({ testsLoading: false });
+    } catch (error) {
+      set({ testsLoading: false, testsError: error instanceof Error ? error.message : 'Failed to run tests' });
+    } finally {
+      stop();
     }
   },
 
   riskReport: null,
   riskLoading: false,
-  runRiskPrediction: async (projectId = 'demo') => {
-    set({ riskLoading: true });
+  riskError: null,
+  runRiskPrediction: async () => {
+    set({ riskLoading: true, riskError: null });
     try {
-      const data = await predictRisk(projectId);
+      const data = await predictRisk();
       set({ riskReport: data, riskLoading: false });
-    } catch {
-      set({ riskLoading: false });
+    } catch (error) {
+      set({ riskLoading: false, riskError: error instanceof Error ? error.message : 'Risk analysis failed' });
     }
   },
-
-  requirementAnalysis: null,
-  requirementLoading: false,
-  runRequirementAnalysis: async (stories) => {
-    set({ requirementLoading: true });
-    try {
-      const data = await analyzeRequirements(stories);
-      set({ requirementAnalysis: data, requirementLoading: false });
-    } catch {
-      set({ requirementLoading: false });
-    }
-  },
-
-  commitAnalysis: null,
-  commitLoading: false,
-  runCommitAnalysis: async (commits) => {
-    set({ commitLoading: true });
-    try {
-      const data = await analyzeCommit(commits);
-      set({ commitAnalysis: data, commitLoading: false });
-    } catch {
-      set({ commitLoading: false });
-    }
-  },
-
-  activeTab: 'dashboard',
-  setActiveTab: (tab: string) => set({ activeTab: tab }),
 
   codeFixes: null,
   codeFixesLoading: false,
@@ -209,9 +266,12 @@ export const useAppStore = create<AppState>((set) => ({
     try {
       const data = await fetchCodeFixes(repoUrl, refresh);
       set({ codeFixes: data, codeFixesLoading: false });
-    } catch {
+    } catch (error) {
       // Set error sentinel so the page doesn't re-trigger in a loop
-      set({ codeFixes: { error: true, fixes: [] }, codeFixesLoading: false });
+      set({
+        codeFixes: { error: true, message: error instanceof Error ? error.message : 'Code analysis failed', fixes: [] },
+        codeFixesLoading: false,
+      });
     }
   },
 
@@ -245,14 +305,12 @@ export const useAppStore = create<AppState>((set) => ({
   },
 
   metrics: null,
-  metricsLoading: false,
   loadMetrics: async () => {
-    set({ metricsLoading: true });
     try {
       const data = await fetchMetrics();
-      set({ metrics: data, metricsLoading: false });
+      set({ metrics: data });
     } catch {
-      set({ metricsLoading: false });
+      // metrics panel simply stays hidden
     }
   },
   submitFeedback: async (predictionId: string, outcome: 'smooth' | 'minor' | 'major') => {

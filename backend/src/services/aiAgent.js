@@ -1,392 +1,126 @@
 /**
- * Gemini AI Agent Service
- * 
- * Dual-SDK support: tries Vertex AI first, falls back to Google AI Studio.
- * Automatic model rotation with cooldowns.
- * Falls back to rule-based analysis if all AI options are exhausted.
+ * AI Agent Service
+ *
+ * Prompts for risk analysis, code fixes, site purpose, and code Q&A.
+ * Model calls go through llmClient (Groq, OpenRouter, Gemini, OpenAI, Ollama,
+ * or any OpenAI-compatible API). Each function has a rule-based fallback, so
+ * everything works without an AI provider configured.
  */
 
-const path = require('path');
+const { askAI, aiAvailable } = require('./llmClient');
+const { computeRisk } = require('./riskEngine');
 
-let vertexAI = null;    // @google-cloud/vertexai (needs billing)
-let genAIStudio = null; // @google/generative-ai  (free API key)
-let activeSDK = null;   // 'vertex' | 'studio' | null
-
-const MODEL_POOL = [
-  'gemini-3.0-flash',
-  'gemini-3.1-flash-lite',
-  'gemini-3.1-pro',
-  'gemini-2.5-flash-lite',
-  'gemini-2.0-flash',
-  'gemini-2.5-flash',
-  'gemini-1.5-flash',
-  'gemini-1.5-pro',
-];
-
-const COOLDOWN_MS = 60_000; // 60s cooldown per model after an error
-
-// Track each model's state
-const modelStates = MODEL_POOL.map(name => ({
-  name,
-  vertexInstance: null,
-  studioInstance: null,
-  cooldownUntil: 0,
-}));
-
-let currentModelIndex = 0;
-
-function initGemini() {
-  // ── Try Vertex AI first ──
-  try {
-    const projectId = process.env.VERTEX_PROJECT_ID || 'utility-axis-465005-n4';
-    const location = process.env.VERTEX_LOCATION || 'us-central1';
-    const keyFilePath = process.env.GOOGLE_APPLICATION_CREDENTIALS
-      || path.join(__dirname, '..', '..', 'service-account.json');
-
-    const fs = require('fs');
-    if (fs.existsSync(keyFilePath)) {
-      process.env.GOOGLE_APPLICATION_CREDENTIALS = keyFilePath;
-      const { VertexAI } = require('@google-cloud/vertexai');
-      vertexAI = new VertexAI({ project: projectId, location });
-      for (const state of modelStates) {
-        state.vertexInstance = vertexAI.getGenerativeModel({ model: state.name });
-      }
-      console.log(`[AI] Vertex AI initialized (project=${projectId})`);
-    }
-  } catch (err) {
-    console.warn('[AI] Vertex AI init failed:', err.message);
-  }
-
-  // ── Try Google AI Studio (free API key) ──
-  try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (apiKey) {
-      const { GoogleGenerativeAI } = require('@google/generative-ai');
-      genAIStudio = new GoogleGenerativeAI(apiKey);
-      for (const state of modelStates) {
-        state.studioInstance = genAIStudio.getGenerativeModel({ model: state.name });
-      }
-      console.log(`[AI] Google AI Studio initialized (API key present)`);
-    }
-  } catch (err) {
-    console.warn('[AI] AI Studio init failed:', err.message);
-  }
-
-  // Determine active SDK
-  if (vertexAI) {
-    activeSDK = 'vertex';
-    console.log(`[AI] Primary SDK: Vertex AI | Fallback: ${genAIStudio ? 'AI Studio' : 'rule-based'}`);
-  } else if (genAIStudio) {
-    activeSDK = 'studio';
-    console.log(`[AI] Primary SDK: AI Studio (Vertex AI unavailable)`);
-  } else {
-    console.log('[AI] No AI SDK available — using rule-based fallback');
-    return false;
-  }
-  console.log(`[AI] Model pool: ${MODEL_POOL.join(', ')}`);
-  return true;
-}
-
-// Init on load
-const geminiAvailable = initGemini();
+// Total source code sent per prompt (~4 chars per token). Keeps prompts within
+// free-tier token limits (e.g. Groq's 8,000 tokens/min) and responses fast.
+const MAX_CONTEXT_CHARS = parseInt(process.env.AI_MAX_CONTEXT_CHARS || '20000', 10);
 
 /**
- * Get the next available model that isn't on cooldown.
+ * Join files (already sorted most-relevant first) into prompt context,
+ * truncating once the budget is used up.
  */
-function getAvailableModel() {
-  const now = Date.now();
-  const total = modelStates.length;
-  for (let i = 0; i < total; i++) {
-    const idx = (currentModelIndex + i) % total;
-    const state = modelStates[idx];
-    if (state.cooldownUntil <= now && (state.vertexInstance || state.studioInstance)) {
-      currentModelIndex = idx;
-      return state;
-    }
+function buildFileContext(files) {
+  const parts = [];
+  let remaining = MAX_CONTEXT_CHARS;
+  for (const f of files) {
+    if (remaining < 500) break;
+    const content = f.content.length > remaining
+      ? f.content.slice(0, remaining) + '\n... [truncated]'
+      : f.content;
+    parts.push(`── ${f.path} ──\n${content}`);
+    remaining -= content.length;
   }
-  return null;
+  return parts.join('\n\n');
 }
 
 /**
- * Check whether an error is retryable.
- */
-function isRetryableError(err) {
-  const msg = (err.message || '') + (err.status || '');
-  return /429|Too Many Requests|quota|not found|404|not supported|does not exist|deprecated|RESOURCE_EXHAUSTED|UNAVAILABLE|403|billing/i.test(msg);
-}
-
-/**
- * Call a single model instance with the prompt.
- * Tries Vertex AI first, then AI Studio, for that model.
- */
-async function callModel(modelState, prompt) {
-  const errors = [];
-
-  // Try Vertex AI first (if available and not globally failed)
-  if (modelState.vertexInstance && activeSDK === 'vertex') {
-    try {
-      const result = await modelState.vertexInstance.generateContent({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      });
-      const text = result.response?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      if (text) {
-        console.log(`[AI] ✓ Vertex AI response from ${modelState.name}`);
-        return text;
-      }
-    } catch (err) {
-      errors.push(err);
-      // If billing error (403), disable Vertex AI entirely and switch to Studio
-      if (err.message?.includes('403') || err.message?.includes('billing')) {
-        console.warn(`[AI] Vertex AI billing error — switching to AI Studio for all requests`);
-        activeSDK = genAIStudio ? 'studio' : null;
-      }
-    }
-  }
-
-  // Try AI Studio (free API key)
-  if (modelState.studioInstance && (activeSDK === 'studio' || activeSDK === 'vertex')) {
-    try {
-      const result = await modelState.studioInstance.generateContent(prompt);
-      const text = result.response.text();
-      if (text) {
-        console.log(`[AI] ✓ AI Studio response from ${modelState.name}`);
-        return text;
-      }
-    } catch (err) {
-      errors.push(err);
-    }
-  }
-
-  // Both failed — throw the last error for retry logic
-  if (errors.length > 0) throw errors[errors.length - 1];
-  throw new Error('No AI SDK available for this model');
-}
-
-/**
- * Ask AI a question with multi-model fallback.
- * Cycles through the model pool on rate-limit errors before
- * falling back to the rule-based fallbackFn.
- */
-async function askGemini(prompt, fallbackFn) {
-  if (!geminiAvailable) {
-    return fallbackFn();
-  }
-
-  const triedModels = new Set();
-
-  while (triedModels.size < MODEL_POOL.length) {
-    const modelState = getAvailableModel();
-
-    if (!modelState) {
-      console.warn('[AI] All models on cooldown — falling back to rule-based');
-      return fallbackFn();
-    }
-
-    if (triedModels.has(modelState.name)) {
-      currentModelIndex = (currentModelIndex + 1) % MODEL_POOL.length;
-      continue;
-    }
-
-    triedModels.add(modelState.name);
-
-    try {
-      return await callModel(modelState, prompt);
-    } catch (err) {
-      if (isRetryableError(err)) {
-        const isRateLimit = /429|RESOURCE_EXHAUSTED|quota/i.test(err.message || '');
-        modelState.cooldownUntil = Date.now() + (isRateLimit ? COOLDOWN_MS : COOLDOWN_MS * 5);
-        const reason = isRateLimit ? 'rate limit' : 'unavailable';
-        console.warn(`[AI] ⚠ ${modelState.name} — ${reason}, rotating...`);
-        currentModelIndex = (currentModelIndex + 1) % MODEL_POOL.length;
-        continue;
-      }
-      console.error(`[AI] ✗ ${modelState.name} error:`, err.message);
-      return fallbackFn();
-    }
-  }
-
-  console.warn('[AI] All models exhausted — falling back to rule-based');
-  return fallbackFn();
-}
-
-/**
- * AI Risk Analysis — analyzes test results and site data
+ * Release risk: the score and decision come from the deterministic risk engine
+ * (so every page agrees and re-runs are stable); the AI only writes the
+ * explanation. Falls back to a rule-based explanation without AI.
  */
 async function analyzeRisk(siteAnalysis, testResults, summary) {
-  const prompt = `You are a senior QA engineer analyzing a website for release readiness.
-
-Website: ${siteAnalysis.url}
-Site Type: ${siteAnalysis.siteType}
-Title: "${siteAnalysis.title || 'None'}"
-
-Test Results Summary:
-- Total Tests: ${summary.total}
-- Passed: ${summary.passed} (${summary.passRate}%)
-- Failed: ${summary.failed}
-- Critical Failures: ${summary.criticalFails}
-- High Priority Failures: ${summary.highFails}
-
-Failed Tests:
-${testResults.filter(t => !t.passed).map(t => `- [${t.priority?.toUpperCase()}] ${t.title}: ${t.explanation}`).join('\n')}
-
-Security Headers Found: ${Object.values(siteAnalysis.securityHeaders || {}).filter(v => !!v).length}/6
-Forms: ${siteAnalysis.forms?.length || 0}
-Images without alt: ${siteAnalysis.images?.withoutAlt || 0}/${siteAnalysis.images?.total || 0}
-Internal Links: ${siteAnalysis.links?.internal || 0}
-External Links: ${siteAnalysis.links?.external || 0}
-
-Provide a concise risk assessment in this exact JSON format (no markdown, just raw JSON):
-{
-  "riskScore": <number 0-100>,
-  "riskLevel": "<low|medium|high|critical>",
-  "deployment": "<approved|blocked>",
-  "summary": "<2-3 sentence risk summary covering the main risk areas>",
-  "topIssues": ["<issue 1>", "<issue 2>", ... list ALL significant issues found, typically 3-8],
-  "recommendations": ["<action 1>", "<action 2>", ... list ALL applicable recommendations, typically 4-8]
-}
-
-CRITICAL SCORING RULES:
-- The riskScore MUST be proportional to the failure ratio. Use this as your baseline: riskScore ≈ (failed / total) * 100, then adjust ±10 for severity.
-- A ${summary.passRate}% pass rate should produce a risk score around ${100 - summary.passRate} (±10), NOT 100.
-- Only score 90+ if pass rate is below 20% AND critical security vulnerabilities exist.
-- Calibration: 90% pass rate → ~15 risk, 70% pass rate → ~35 risk, 50% pass rate → ~55 risk, 30% pass rate → ~75 risk.
-- deployment = "blocked" ONLY if riskScore >= 60.
-IMPORTANT: List ALL significant issues and actionable recommendations — do NOT limit to exactly 3. The number should reflect the actual findings.`;
-
-  const fallback = () => calculateRiskRuleBased(siteAnalysis, testResults, summary);
-
-  const response = await askGemini(prompt, fallback);
-
-  // If Gemini returned text, parse it
-  if (typeof response === 'string') {
-    try {
-      // Extract JSON from response (Gemini sometimes wraps in markdown)
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return { ...JSON.parse(jsonMatch[0]), source: 'gemini' };
-      }
-    } catch (e) {
-      console.error('[Gemini] JSON parse error:', e.message);
-    }
-    return { ...calculateRiskRuleBased(siteAnalysis, testResults, summary), source: 'fallback' };
-  }
-
-  return { ...response, source: response.source || 'fallback' };
-}
-
-/**
- * Rule-based risk calculation (fallback when no Gemini)
- */
-function calculateRiskRuleBased(siteAnalysis, testResults, summary) {
-  // Risk is based on the ratio of weighted failures to total weighted tests,
-  // ensuring the score reflects pass/fail proportions (not just stacking penalties).
-  const priorityWeights = { critical: 4, high: 3, medium: 2, low: 1 };
-
-  const totalWeight = testResults.reduce((sum, t) => sum + (priorityWeights[t.priority] || 2), 0);
-  const failedWeight = testResults
-    .filter(t => !t.passed)
-    .reduce((sum, t) => sum + (priorityWeights[t.priority] || 2), 0);
-
-  // Base risk: proportion of weighted failures (0-100)
-  let baseRisk = totalWeight > 0 ? (failedWeight / totalWeight) * 100 : 0;
-
-  // Small modifiers for site-wide concerns (capped to avoid inflating score)
-  const secCount = Object.values(siteAnalysis.securityHeaders || {}).filter(v => !!v).length;
-  let modifier = 0;
-
-  // Security header modifier: up to +8 points if headers are very poor
-  if (secCount < 2) modifier += 8;
-  else if (secCount < 4) modifier += 4;
-
-  // Accessibility modifier: up to +4 points
-  if (siteAnalysis.images?.total > 0 && siteAnalysis.images?.withoutAlt > siteAnalysis.images.total * 0.3) {
-    modifier += 4;
-  }
-
-  // Critical failure bonus: up to +5 points if any critical tests failed
-  if (summary.criticalFails > 0) modifier += Math.min(5, summary.criticalFails * 2);
-
-  let riskScore = Math.min(100, Math.max(0, Math.round(baseRisk + modifier)));
-  const riskLevel = riskScore >= 70 ? 'high' : riskScore >= 40 ? 'medium' : 'low';
-  const deployment = riskScore >= 60 ? 'blocked' : 'approved';
-
-  // Generate ALL issues from failed tests (not just 3)
-  const topIssues = [];
-  const failedTests = testResults.filter(t => !t.passed);
-  failedTests.forEach(t => {
-    const explanation = (t.explanation || t.title || '').substring(0, 150);
-    if (explanation && !topIssues.includes(explanation)) {
-      topIssues.push(explanation);
-    }
-  });
-
-  // Generate comprehensive recommendations based on ALL detected issues
-  const recommendations = [];
-  if (failedTests.some(t => /meta.?desc/i.test(t.title)))
-    recommendations.push('Add a descriptive <meta name="description"> tag (under 160 characters) for SEO');
-  if (failedTests.some(t => /security.?header/i.test(t.title)))
-    recommendations.push(`Configure missing security headers — ${6 - secCount} of 6 not present (CSP, X-Frame-Options, HSTS, X-Content-Type-Options)`);
-  if (failedTests.some(t => /alt.?tag/i.test(t.title)))
-    recommendations.push(`Add alt attributes to ${siteAnalysis.images?.withoutAlt || 'all'} images missing them for WCAG 2.1 compliance`);
-  if (failedTests.some(t => /https|ssl/i.test(t.title)))
-    recommendations.push('Enable HTTPS with a valid TLS certificate and redirect HTTP traffic');
-  if (failedTests.some(t => /open.?graph/i.test(t.title)))
-    recommendations.push('Add Open Graph meta tags (og:title, og:description, og:image) for social sharing previews');
-  if (failedTests.some(t => /sitemap/i.test(t.title)))
-    recommendations.push('Generate and serve a sitemap.xml for search engine discovery');
-  if (failedTests.some(t => /robots/i.test(t.title)))
-    recommendations.push('Create a robots.txt with proper crawl directives');
-  if (failedTests.some(t => /structured|json-ld/i.test(t.title)))
-    recommendations.push('Implement structured data (JSON-LD) for rich search result snippets');
-  if (failedTests.some(t => /viewport/i.test(t.title)))
-    recommendations.push('Add viewport meta tag for proper mobile rendering');
-  if (failedTests.some(t => /compress|gzip/i.test(t.title)))
-    recommendations.push('Enable gzip/brotli compression to reduce transfer size by 60-80%');
-  if (failedTests.some(t => /landmark|aria|semantic/i.test(t.title)))
-    recommendations.push('Add semantic HTML landmarks (<main>, <nav>, <header>) for accessibility');
-  if (failedTests.some(t => /label|form.?input/i.test(t.title)))
-    recommendations.push('Associate labels with all form inputs for assistive technology');
-  if (failedTests.some(t => /skip.?nav/i.test(t.title)))
-    recommendations.push('Add a skip navigation link for keyboard-only users');
-  if (failedTests.some(t => /heading|h1/i.test(t.title)))
-    recommendations.push('Ensure exactly one H1 heading per page with proper heading hierarchy');
-  if (failedTests.some(t => /canonical/i.test(t.title)))
-    recommendations.push('Add a canonical URL tag to prevent duplicate content issues');
-  if (failedTests.some(t => /favicon/i.test(t.title)))
-    recommendations.push('Add a favicon for brand recognition in browser tabs');
-  if (failedTests.some(t => /noscript/i.test(t.title)))
-    recommendations.push('Add a <noscript> fallback for users with JavaScript disabled');
-  if (failedTests.some(t => /cookie/i.test(t.title)))
-    recommendations.push('Set HttpOnly, Secure, and SameSite flags on all cookies');
-  if (summary.passRate < 80)
-    recommendations.push(`Improve overall test pass rate from ${summary.passRate}% to at least 80%`);
-  if (recommendations.length === 0)
-    recommendations.push('Continue monitoring for regressions and maintain current quality');
-
-  // Build detailed summary
-  const summaryParts = [`This release has a risk score of ${riskScore}/100.`];
-  summaryParts.push(`${summary.passed} of ${summary.total} tests passed (${summary.passRate}%).`);
-  if (summary.criticalFails > 0) summaryParts.push(`${summary.criticalFails} critical issue(s) require immediate attention.`);
-  if (summary.highFails > 0) summaryParts.push(`${summary.highFails} high-priority issue(s) detected.`);
-  if (secCount < 3) summaryParts.push(`Only ${secCount}/6 security headers are configured.`);
-  if (siteAnalysis.images?.withoutAlt > 0) summaryParts.push(`${siteAnalysis.images.withoutAlt} images lack alt text.`);
-
-  return {
-    riskScore,
-    riskLevel,
-    deployment,
-    summary: summaryParts.join(' '),
-    topIssues,
+  const engine = computeRisk(testResults);
+  const recommendations = buildRiskRecommendations(engine, siteAnalysis);
+  const base = {
+    riskScore: engine.riskScore,
+    riskLevel: engine.riskLevel,
+    deployment: engine.deployment,
+    reasons: engine.reasons,
+    blockers: engine.blockers,
+    categories: engine.categories,
+    formula: engine.formula,
+    topIssues: engine.categories.flatMap(c => c.failures.slice(0, 3).map(f => `${c.name}: ${f.title}`)).slice(0, 8),
     recommendations,
-    source: 'rule-based',
   };
+  const fallback = () => ({ ...base, summary: ruleBasedRiskSummary(engine, summary), source: 'rule-based' });
+
+  const prompt = `You are a senior QA engineer writing the release-readiness summary for ${siteAnalysis.url}.
+The decision is already made by a fixed formula — do NOT change or re-score it.
+
+Decision: ${engine.deployment.toUpperCase()} · Risk ${engine.riskScore}/100 (${engine.riskLevel})
+${engine.reasons.length ? `Why blocked:\n${engine.reasons.map(r => `- ${r}`).join('\n')}` : 'No release blockers.'}
+
+Category risk (weight in score):
+${engine.categories.filter(c => c.measured).map(c => `- ${c.name} (${c.weight}%): risk ${c.risk}/100, ${c.failed}/${c.checks} checks failing${c.failures.length ? ` — ${c.failures.slice(0, 5).map(f => f.title).join('; ')}` : ''}`).join('\n')}
+
+Write 2-3 sentences for a developer: state the decision and the reason, the most important functional and security problems, and treat SEO/metadata issues as minor. Plain text, no markdown, no JSON.`;
+
+  const response = await askAI(prompt, () => null);
+  if (typeof response === 'string' && response.trim()) {
+    return { ...base, summary: response.trim().replace(/^["']|["']$/g, ''), source: 'ai' };
+  }
+  return fallback();
+}
+
+function ruleBasedRiskSummary(engine, summary) {
+  const parts = [`Deployment ${engine.deployment === 'blocked' ? 'BLOCKED' : 'APPROVED'} — risk ${engine.riskScore}/100.`];
+  if (engine.reasons.length) parts.push(`Blocked because: ${engine.reasons.join('; ')}.`);
+  const worst = engine.categories.filter(c => c.measured && c.failed && c.key !== 'seo').sort((a, b) => b.risk * b.weight - a.risk * a.weight)[0];
+  if (worst) parts.push(`Biggest concern: ${worst.name} (${worst.failed} failing — ${worst.failures.slice(0, 2).map(f => f.title).join(', ')}).`);
+  parts.push(`${summary.passed} of ${summary.total} checks passed.`);
+  return parts.join(' ');
+}
+
+// Most important first: blockers, then by category weight
+const RECOMMENDATION_RULES = [
+  [/open directly by url/i, 'Configure the host to serve index.html for every route (Vercel: vercel.json rewrite "/(.*)" → "/index.html") so refreshes and shared links work'],
+  [/pages load without errors|http status/i, 'Fix pages that fail to load or return HTTP errors'],
+  [/javascript error/i, 'Fix the JavaScript errors reported in the browser console'],
+  [/ssl|https/i, 'Serve the site over HTTPS with a valid certificate and redirect HTTP traffic'],
+  [/mixed content/i, 'Load every resource over https:// to remove mixed content'],
+  [/content security policy|csp/i, 'Add a Content-Security-Policy header to limit where scripts can load from (XSS protection)'],
+  [/clickjacking/i, 'Add X-Frame-Options: DENY (or CSP frame-ancestors) to prevent clickjacking'],
+  [/mime/i, 'Add X-Content-Type-Options: nosniff'],
+  [/cookie/i, 'Set HttpOnly, Secure and SameSite flags on cookies'],
+  [/cors/i, 'Restrict CORS to your own origins'],
+  [/compression|gzip/i, 'Enable gzip/brotli compression'],
+  [/load in under|response time|ttfb|first contentful|slow/i, 'Speed up slow pages (server response time, image sizes, script size)'],
+  [/alt text/i, 'Add alt text to images'],
+  [/landmark|aria/i, 'Use semantic landmarks (<main>, <nav>, <header>) for screen readers'],
+  [/label/i, 'Associate a <label> with every form input'],
+  [/skip navigation/i, 'Add a "skip to content" link for keyboard users'],
+  [/referrer|permissions/i, 'Add Referrer-Policy and Permissions-Policy headers'],
+  [/meta description/i, 'Add meta descriptions (SEO — low priority)'],
+  [/open graph|twitter|structured|canonical|sitemap|robots|favicon|h1/i, 'Fill in SEO extras: sitemap, robots.txt, favicon, Open Graph, canonical (low priority)'],
+];
+
+function buildRiskRecommendations(engine) {
+  const failing = [
+    ...engine.blockers.map(b => b.title),
+    ...[...engine.categories].sort((a, b) => b.weight - a.weight).flatMap(c => c.failures.map(f => f.title)),
+  ];
+  const recs = [];
+  for (const title of failing) {
+    const rule = RECOMMENDATION_RULES.find(([pattern]) => pattern.test(title));
+    if (rule && !recs.includes(rule[1])) recs.push(rule[1]);
+  }
+  return recs.length ? recs.slice(0, 8) : ['No failing checks — keep monitoring after release'];
 }
 
 /**
  * AI Site Purpose Analysis
  */
 async function analyzeSitePurpose(siteAnalysis) {
-  if (!geminiAvailable) {
+  if (!aiAvailable) {
     return { purpose: siteAnalysis.siteType, confidence: 0.7, source: 'rule-based' };
   }
 
@@ -400,8 +134,8 @@ Links: ${siteAnalysis.links?.total || 0}
 
 Reply with just the purpose description, nothing else.`;
 
-  const result = await askGemini(prompt, () => `${siteAnalysis.siteType} website`);
-  return { purpose: typeof result === 'string' ? result.trim() : result, source: geminiAvailable ? 'gemini' : 'rule-based' };
+  const result = await askAI(prompt, () => `${siteAnalysis.siteType} website`);
+  return { purpose: typeof result === 'string' ? result.trim() : result, source: aiAvailable ? 'ai' : 'rule-based' };
 }
 
 /**
@@ -410,9 +144,7 @@ Reply with just the purpose description, nothing else.`;
 async function analyzeCodeFixes(files, testResults, siteAnalysis) {
   const failedTests = testResults.filter(t => !t.passed);
 
-  const fileContext = files.map(f =>
-    `── ${f.path} ──\n${f.content}`
-  ).join('\n\n');
+  const fileContext = buildFileContext(files);
 
   const failedContext = failedTests.map(t =>
     `- [${t.priority?.toUpperCase()}] ${t.title}: ${t.explanation}`
@@ -446,17 +178,17 @@ If a test failure cannot be traced to a specific file, suggest where to add the 
 Return ONLY the JSON array, nothing else.`;
 
   const fallback = () => generateRuleBasedFixes(failedTests, files);
-  const response = await askGemini(prompt, fallback);
+  const response = await askAI(prompt, fallback);
 
   if (typeof response === 'string') {
     try {
       const jsonMatch = response.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         const fixes = JSON.parse(jsonMatch[0]);
-        return { fixes, source: 'gemini' };
+        return { fixes, source: 'ai' };
       }
     } catch (e) {
-      console.error('[Gemini] Code fix JSON parse error:', e.message);
+      console.error('[AI] Code fix JSON parse error:', e.message);
     }
     return { fixes: generateRuleBasedFixes(failedTests, files), source: 'fallback' };
   }
@@ -745,7 +477,7 @@ function generateRuleBasedFixes(failedTests, files) {
 
 /**
  * Rule-based codebase Q&A — analyzes the fetched source files locally
- * when Gemini is unavailable. Provides meaningful answers from file structure
+ * when no AI provider is available. Provides meaningful answers from file structure
  * and content analysis.
  */
 function ruleBasedCodeQA(question, files, projectContext = {}) {
@@ -913,9 +645,7 @@ function ruleBasedCodeQA(question, files, projectContext = {}) {
  * AI Codebase Q&A — answer questions about the codebase
  */
 async function askAboutCode(question, files, projectContext = {}) {
-  const fileContext = files.map(f =>
-    `── ${f.path} ──\n${f.content}`
-  ).join('\n\n');
+  const fileContext = buildFileContext(files);
 
   const prompt = `You are a senior software engineer who deeply understands this codebase. A developer is asking you a question about it.
 
@@ -949,23 +679,23 @@ Return your response as JSON (no markdown, no code fences):
   // Fallback: use rule-based analysis of the actual source code files
   const fallback = () => ruleBasedCodeQA(question, files, projectContext);
 
-  const response = await askGemini(prompt, fallback);
+  const response = await askAI(prompt, fallback);
 
   if (typeof response === 'string') {
     try {
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        return { ...JSON.parse(jsonMatch[0]), source: 'gemini' };
+        return { ...JSON.parse(jsonMatch[0]), source: 'ai' };
       }
     } catch (e) {
-      console.error('[Gemini] Q&A JSON parse error:', e.message);
+      console.error('[AI] Q&A JSON parse error:', e.message);
     }
     // If can't parse JSON, return the raw text as the answer
-    return { answer: response.trim(), references: [], confidence: 0.7, source: 'gemini', followUpQuestions: [] };
+    return { answer: response.trim(), references: [], confidence: 0.7, source: 'ai', followUpQuestions: [] };
   }
 
   return { ...response, source: response.source || 'fallback' };
 }
 
-module.exports = { analyzeRisk, analyzeSitePurpose, analyzeCodeFixes, askAboutCode, askGemini, geminiAvailable };
+module.exports = { analyzeRisk, analyzeSitePurpose, analyzeCodeFixes, askAboutCode, askAI, aiAvailable };
 
